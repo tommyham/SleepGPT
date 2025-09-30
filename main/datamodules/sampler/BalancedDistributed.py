@@ -1,102 +1,193 @@
-from torch.utils.data.distributed import DistributedSampler
+# balanced_distributed_sampler.py
+from typing import Sequence, Optional, List
+import math
 import torch
-from torch.utils.data import Sampler, Dataset
+from torch.utils.data.distributed import DistributedSampler
 import torch.distributed as dist
 
+
 class BalancedDistributedSampler(DistributedSampler):
-    def __init__(self,dataset, positive_indices, negative_indices, batch_size, num_replicas=None, rank=None, shuffle=False, seed=0, drop_last=False):
-        super().__init__(dataset)
-        self.dataset = dataset
-        self.positive_indices = positive_indices
-        self.negative_indices = negative_indices
+    """
+    A DDP-friendly balanced sampler that forms batches with 50% positives and 50% negatives
+    on every replica. Works with or without replacement, supports shuffling via set_epoch().
+
+    Args:
+        dataset: torch Dataset (not used for length, kept for DistributedSampler compatibility)
+        positive_indices: Sequence[int] indices for positive samples
+        negative_indices: Sequence[int] indices for negative samples
+        batch_size: global per-process batch size that this sampler should produce indices for
+                    (i.e., the batch size used by each DDP rank's DataLoader)
+        num_replicas: world size (auto-detected if None)
+        rank: current rank (auto-detected if None)
+        shuffle: shuffle each epoch (default: True)
+        seed: base seed for shuffling (default: 0)
+        drop_last: if True, drop trailing samples that don't form a full batch
+        replacement: if True, sample with replacement to meet exact balanced batches even if
+                     either class is short. If False, the number of batches is capped
+                     by the available data from the smaller class.
+    """
+    def __init__(
+        self,
+        dataset,
+        positive_indices: Sequence[int],
+        negative_indices: Sequence[int],
+        batch_size: int,
+        num_replicas: Optional[int] = None,
+        rank: Optional[int] = None,
+        shuffle: bool = True,
+        seed: int = 0,
+        drop_last: bool = False,
+        replacement: bool = True,
+    ):
+        # We pass shuffle=False to parent; we control shuffling ourselves via set_epoch().
+        super().__init__(dataset, num_replicas=num_replicas, rank=rank, shuffle=False, seed=seed, drop_last=drop_last)
+
+        if batch_size <= 0 or batch_size % 2 != 0:
+            raise ValueError(f"`batch_size` must be a positive even number, got {batch_size}.")
         self.batch_size = batch_size
+        self.half = batch_size // 2
+
+        self.pos = torch.as_tensor(list(positive_indices), dtype=torch.long)
+        self.neg = torch.as_tensor(list(negative_indices), dtype=torch.long)
+        if len(self.pos) < self.half and not replacement:
+            raise ValueError(f"Not enough positive samples ({len(self.pos)}) to fill even one batch half ({self.half}) without replacement.")
+        if len(self.neg) < self.half and not replacement:
+            raise ValueError(f"Not enough negative samples ({len(self.neg)}) to fill even one batch half ({self.half}) without replacement.")
+
         self.shuffle = shuffle
         self.seed = seed
-        self.drop_last = drop_last
+        self.replacement = replacement
+        self.epoch = 0  # will be set by set_epoch()
 
-        if num_replicas is None:
-            if not dist.is_available():
-                raise RuntimeError("Requires distributed package to be available")
-            num_replicas = dist.get_world_size()
-        if rank is None:
-            if not dist.is_available():
-                raise RuntimeError("Requires distributed package to be available")
-            rank = dist.get_rank()
+        # Precompute usable batches per replica given availability & settings
+        self._recompute_plan()
 
-        self.num_replicas = num_replicas
-        self.rank = rank
-        self.epoch = 0
-        # Calculate the number of positive samples per replica and adjust for drop_last
-        self.num_samples_per_replica = len(self.positive_indices) // self.num_replicas
-        if self.drop_last is True:
-            self.num_samples_per_replica = (self.num_samples_per_replica // (self.batch_size // 2)) * (self.batch_size // 2)
+    # ------------------------ helpers ------------------------
 
-        # The total samples for each replica should be double the positive samples because we have equal number of negative samples
-        self.total_samples_per_replica = self.num_samples_per_replica * 2
-        self.total_samples = self.total_samples_per_replica * self.num_replicas
-        self.num_batches = self.num_samples_per_replica // (self.batch_size // 2)
-        print(f'rank: {rank}, '
-              f'num_batches: {self.num_batches}, '
-              f'self.total_samples: {self.total_samples}, '
-              f'self.total_samples_per_replica: {self.total_samples_per_replica}, '
-              f'num_samples_per_replica: {self.num_samples_per_replica}, '
-              f'num_replicas: {num_replicas}')
-
-    def __iter__(self):
+    def _rng(self) -> torch.Generator:
         g = torch.Generator()
         g.manual_seed(self.seed + self.epoch)
+        return g
 
-        pos_indices = torch.tensor(self.positive_indices)
-        neg_indices = torch.tensor(self.negative_indices)
-
-        if self.shuffle:
-            pos_indices = pos_indices[torch.randperm(len(pos_indices), generator=g)]
-            neg_indices = neg_indices[torch.randperm(len(neg_indices), generator=g)]
-
-        # Ensure each process gets a unique subset of positive samples
-        pos_indices_split = torch.chunk(pos_indices, self.num_replicas)
-        pos_indices_local = pos_indices_split[self.rank]
-
-        if self.drop_last:
-            pos_indices_local = pos_indices_local[:self.num_samples_per_replica]
-
-        num_pos_samples = len(pos_indices_local)
-        num_neg_samples = num_pos_samples
-
-        if num_neg_samples > len(neg_indices):
-            raise ValueError(f"Cannot sample {num_neg_samples} negative samples from only {len(neg_indices)} available.")
-
-        neg_indices_local = torch.chunk(neg_indices[torch.randperm(len(neg_indices), generator=g)][:(self.num_samples_per_replica*self.num_replicas)], self.num_replicas)
-        neg_indices_local = neg_indices_local[self.rank]
-        indices = []
-        # print(f'rank: {self.rank}, num_batches: {num_pos_samples // (self.batch_size // 2)}, num_pos_samples: {num_pos_samples}')
-        if self.drop_last:
-            for i in range(num_pos_samples // (self.batch_size // 2)):
-                batch_pos = pos_indices_local[i * (self.batch_size // 2):(i + 1) * (self.batch_size // 2)]
-                batch_neg = neg_indices_local[i * (self.batch_size // 2):(i + 1) * (self.batch_size // 2)]
-                batch = torch.cat([batch_pos, batch_neg])
-                batch = batch[torch.randperm(len(batch), generator=g)]
-                indices.extend(batch.tolist())
+    def _recompute_plan(self):
+        """
+        Decide how many balanced batches each replica will yield this epoch,
+        and thus how many indices in total we need for pos/neg globally.
+        """
+        world_size = self.num_replicas
+        # Max batches per *replica* limited by data size when not using replacement
+        if self.replacement:
+            # We can make as many as floor(total_pos/half/world) but we generally
+            # choose the maximum integral number given dataset sizes. To avoid huge
+            # epochs when using replacement, cap by the available set lengths.
+            # Here we simply base it on the larger set to allow full utilization.
+            # You can also expose a max_batches_per_epoch if you want tighter control.
+            # We'll align to the limiting side if replacement=False; if True, use the average of both.
+            max_batches_by_pos = max(1, len(self.pos) // self.half // world_size) if len(self.pos) >= self.half else 1
+            max_batches_by_neg = max(1, len(self.neg) // self.half // world_size) if len(self.neg) >= self.half else 1
+            # choose at least 1
+            self.num_batches_per_replica = max(1, (max_batches_by_pos + max_batches_by_neg) // 2)
         else:
-            num_batches = len(pos_indices_local) // (self.batch_size // 2)
-            for i in range(num_batches):
-                batch_pos = pos_indices_local[i * (self.batch_size // 2):(i + 1) * (self.batch_size // 2)]
-                batch_neg = neg_indices_local[i * (self.batch_size // 2):(i + 1) * (self.batch_size // 2)]
-                batch = torch.cat([batch_pos, batch_neg])
-                batch = batch[torch.randperm(len(batch), generator=g)]
-                indices.extend(batch.tolist())
+            # Limited by the *smaller* class since we need equal halves without replacement
+            total_pos_batches = len(self.pos) // self.half
+            total_neg_batches = len(self.neg) // self.half
+            total_balanced_batches = min(total_pos_batches, total_neg_batches)
+            # Make it divisible by world size if drop_last, otherwise allow remainder (we'll drop anyway)
+            if self.drop_last:
+                total_balanced_batches = (total_balanced_batches // world_size) * world_size
+            # per-replica batches:
+            self.num_batches_per_replica = total_balanced_batches // world_size
 
-            remaining_pos = pos_indices_local[num_batches * (self.batch_size // 2):]
-            remaining_neg = neg_indices_local[num_batches * (self.batch_size // 2):]
-            if len(remaining_pos) > 0 and len(remaining_neg) > 0:
-                remaining_batch = torch.cat([remaining_pos, remaining_neg])
-                remaining_batch = remaining_batch[torch.randperm(len(remaining_batch), generator=g)]
-                indices.extend(remaining_batch.tolist())
-        # print(f'indices: {indices}, rank: {self.rank}')
-        return iter(indices)
+        if self.drop_last:
+            # Ensure each replica yields full batches only
+            self.num_batches_per_replica = max(0, self.num_batches_per_replica)
+        else:
+            # If not dropping, ensure at least one batch if possible
+            self.num_batches_per_replica = max(1, self.num_batches_per_replica)
 
-    def __len__(self):
-        return self.total_samples_per_replica
+        # Total samples per replica = batches * batch_size
+        self._local_len = self.num_batches_per_replica * self.batch_size
+        # For printing/debugging:
+        # print(f"[rank {self.rank}] epoch={self.epoch} batches/rep={self.num_batches_per_replica}, local_len={self._local_len}")
 
-    def set_epoch(self, epoch):
-        self.epoch = epoch
+    # ------------------------ core API ------------------------
+
+    def __iter__(self):
+        g = self._rng()
+
+        # Shuffle order within each class per epoch (if enabled)
+        pos_pool = self.pos
+        neg_pool = self.neg
+        if self.shuffle:
+            pos_pool = pos_pool[torch.randperm(len(pos_pool), generator=g)]
+            neg_pool = neg_pool[torch.randperm(len(neg_pool), generator=g)]
+
+        # Compute how many pos/neg we need globally to serve all replicas
+        world_size = self.num_replicas
+        need_pos_global = self.num_batches_per_replica * self.half * world_size
+        need_neg_global = self.num_batches_per_replica * self.half * world_size
+
+        # Slice or sample with/without replacement to get exactly needed counts
+        pos_indices_global = self._take_exact(pos_pool, need_pos_global, g, replacement=self.replacement)
+        neg_indices_global = self._take_exact(neg_pool, need_neg_global, g, replacement=self.replacement)
+
+        # Evenly split into replicas (equal sizes guaranteed)
+        pos_chunks = pos_indices_global.split(self.num_batches_per_replica * self.half)
+        neg_chunks = neg_indices_global.split(self.num_batches_per_replica * self.half)
+        # Pick my share
+        pos_local = pos_chunks[self.rank]
+        neg_local = neg_chunks[self.rank]
+
+        # Form per-batch 50/50 and locally shuffle inside each batch
+        out: List[int] = []
+        for b in range(self.num_batches_per_replica):
+            p_start = b * self.half
+            n_start = b * self.half
+            batch = torch.cat([
+                pos_local[p_start:p_start + self.half],
+                neg_local[n_start:n_start + self.half]
+            ], dim=0)
+            # shuffle within batch for randomness
+            if self.shuffle:
+                perm = torch.randperm(self.batch_size, generator=g)
+                batch = batch[perm]
+            out.extend(batch.tolist())
+
+        # If not drop_last and we somehow have remainder (shouldn't happen by construction),
+        # you could append them here—but we keep strict balanced batches only.
+        return iter(out)
+
+    def __len__(self) -> int:
+        # Number of indices this sampler will yield for *this* rank
+        return self._local_len
+
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = int(epoch)
+        self._recompute_plan()
+
+    # ------------------------ utils ------------------------
+
+    @staticmethod
+    def _take_exact(pool: torch.Tensor, need: int, g: torch.Generator, replacement: bool) -> torch.Tensor:
+        """
+        Return exactly `need` indices from `pool`. If replacement=False, we slice the first `need`
+        elements (caller should ensure `len(pool) >= need`). If replacement=True and `need` > len(pool),
+        we repeat + sample the residual with replacement for exact length.
+        """
+        n = len(pool)
+        if need <= n:
+            return pool[:need].clone()
+
+        if not replacement:
+            # Should not happen if caller guarded; fallback: truncate
+            return pool[:n - (n % 1)]  # keep type, essentially pool
+
+        # With replacement: tile then draw the remainder
+        times = need // n
+        rem = need % n
+        tiles = [pool] * times
+        if rem > 0:
+            # sample rem elements with replacement from pool
+            idx = torch.randint(high=n, size=(rem,), generator=g)
+            tiles.append(pool[idx])
+        return torch.cat(tiles, dim=0)
