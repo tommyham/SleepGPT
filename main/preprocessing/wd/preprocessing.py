@@ -227,9 +227,9 @@ def align_psg_ums(psg_signal, ums_signal, labels, auto_labels, save_root, sub_na
                                                                                                            plot=plot,
                                                                                                            save=save)
         # best_idx = best_idx - 150
-        if subject_name in manual_dict.keys():
-            best_idx = psg_start + manual_dict[subject_name]
-            logger.info(f'{subject_name}: manual - {manual_dict[subject_name]}, best_idx: {best_idx}')
+        # if subject_name in manual_dict.keys():
+        #     best_idx = psg_start + manual_dict[subject_name]
+        #     logger.info(f'{subject_name}: manual - {manual_dict[subject_name]}, best_idx: {best_idx}')
         # best_idx = psg_start + 510
 
         if plot is True:
@@ -466,7 +466,11 @@ def main(items, root_path, psg_root_path, ums_root_path, logger):
                     subject_name=sub_name)
                 records.append({
                     "name": sub_name,
-                    "ums_st_ed": ums_st_ed,
+                    "ums_st": ums_st_ed[0],
+                    "ums_ed": ums_st_ed[1],
+                    "psg_st": ums_st_ed[2],
+
+                    "psg_ed": ums_st_ed[3]
                 })
                 print(f"ums_st_ed :  {ums_st_ed}")
                 offset_labels = np.array(offset_labels)
