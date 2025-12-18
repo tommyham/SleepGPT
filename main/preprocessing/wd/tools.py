@@ -127,7 +127,7 @@ def plot_manual_vs_auto_hypnogram(manual_labels, auto_labels,  sub_folder, save_
 def align_spo2_signals_with_offset(psg_signal, ums_signal, offset_sec, labels, auto_labels, fs=1, epoch_sec=30):
     samples_per_epoch = epoch_sec * fs
     offset_sec = int(offset_sec)
-
+    psg_start = 0
     if offset_sec > 0:
         # UMS 早启动，丢掉前面 offset 秒的 UMS
         ums_end = len(auto_labels) * samples_per_epoch 
@@ -143,6 +143,7 @@ def align_spo2_signals_with_offset(psg_signal, ums_signal, offset_sec, labels, a
         offset_sec = abs(offset_sec)
         if offset_sec % samples_per_epoch == 0:
             psg_aligned = psg_signal[offset_sec:]
+            psg_start = offset_sec
             ums_aligned = ums_signal[:len(psg_aligned)]
             offset_labels = labels[offset_sec // samples_per_epoch:]
             ums_start = 0
@@ -153,7 +154,7 @@ def align_spo2_signals_with_offset(psg_signal, ums_signal, offset_sec, labels, a
             psg_trim_start = offset_epochs * samples_per_epoch
 
             psg_aligned = psg_signal[psg_trim_start:]
-
+            psg_start = psg_trim_start
             ums_start = psg_trim_start - offset_sec
             ums_epoch_start = ums_start//samples_per_epoch
             ums_epoch_end = (ums_start + len(psg_aligned))//samples_per_epoch
@@ -168,7 +169,7 @@ def align_spo2_signals_with_offset(psg_signal, ums_signal, offset_sec, labels, a
         psg_aligned[:final_len],
         ums_aligned[:final_len],
         offset_sec_adjusted,
-        [ums_start, ums_start + final_len],
+        [ums_start, ums_start + final_len, psg_start, psg_start + final_len],
         offset_labels[:final_len // samples_per_epoch],
         offset_auto_labels[:final_len // samples_per_epoch]
     )

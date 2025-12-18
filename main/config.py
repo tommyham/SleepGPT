@@ -1711,8 +1711,6 @@ def MASS2_datasets():
     datasets = ['MASS2']
     data_dir = ["/home/cuizaixu_lab/huangweixuan/DATA/data/MASS_Processed/SS2"]
     data_setting = {'MASS': 'AMP'}
-    kfold = 20
-
     actual_channels = None
 @ex.named_config
 def MASS2_aug_random_insert_datasets():
@@ -1726,10 +1724,11 @@ def MASS2_aug_random_insert_datasets():
 
 @ex.named_config
 def MASS2_aug_random_datasets():
-    datasets = ['MASS2', 'MASS2_AUG']
-    data_dir = ["/home/cuizaixu_lab/huangweixuan/DATA/data/MASS_Processed/SS2","/home/cuizaixu_lab/huangweixuan/DATA/data/MASS_Processed/Aug_Random"]
+    datasets = ['MASS2_AUG', "MASS2"]
+    data_dir = ["/home/cuizaixu_lab/huangweixuan/DATA/data/MASS_Processed/Aug_Random", "/home/cuizaixu_lab/huangweixuan/DATA/data/MASS_Processed/SS2"]
     data_setting = {'MASS': 'AMP'}
     actual_channels = None
+
 @ex.named_config
 def MASS3_datasets():
     datasets = ['MASS3']
@@ -1753,6 +1752,23 @@ def MASS5_datasets():
     data_setting = {'MASS': 'AMP'}
 
     kfold = 20
+
+@ex.named_config
+def MASS_portion_1_datasets():
+    mode = "Finetune_mass_portion_1"
+    extra_name = "Finetune_MASS_portion_1"
+@ex.named_config
+def MASS_portion_2_datasets():
+    mode = "Finetune_mass_portion_2"
+    extra_name = "Finetune_MASS_portion_2"
+@ex.named_config
+def MASS_portion_5_datasets():
+    mode = "Finetune_mass_portion_5"
+    extra_name = "Finetune_MASS_portion_5"
+@ex.named_config
+def MASS_portion_12_datasets():
+    mode = "Finetune_mass_portion_12"
+    extra_name = "Finetune_MASS_portion_12"
 
 @ex.named_config
 def SD_datasets():

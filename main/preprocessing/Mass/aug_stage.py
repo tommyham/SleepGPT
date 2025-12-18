@@ -101,8 +101,8 @@ def clone_batch(batch):
 
 @ex.automain
 def main(_config):
-    pre_train = Model(_config)
     print(_config)
+    pre_train = Model(_config, num_classes=_config['num_classes'])
     pl.seed_everything(512)
     pre_train.set_task()
     pre_train.mask_same = True
@@ -117,7 +117,7 @@ def main(_config):
     partition = int(len(edf_items)/2) + 1
     partition_idx = 0
     resume_flag = False
-    for edf_items_index, sub in enumerate(edf_items[(partition_idx*partition):((partition_idx+1)*partition)]):
+    for edf_items_index, sub in enumerate(edf_items[14:]):
         if os.path.isdir(sub):
             base_name = os.path.basename(sub)
             sub_arr_items = sorted(glob.glob(os.path.join(sub, '*')))
@@ -135,7 +135,7 @@ def main(_config):
                     batch_orig = {'stage': stage.detach().clone().unsqueeze(0),
                                   'x': (epoch, torch.tensor([4, 5, 16, 18, 22, 36, 38, 52])),
                                   'index': torch.tensor(1),
-                                  'need_norm': True}  # index is no use
+                                  'norms': [True]}  # index is no use
                     batch_list.append(batch_orig)
                 batch_cpu = collate(batch_list)
                 batch_cuda = move_to_device(batch_cpu, device)

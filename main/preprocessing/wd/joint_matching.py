@@ -78,7 +78,7 @@ def sleep_stage_similarity(seg1, seg2, method='kappa'):
     elif method == 'both':
         kappa = cohen_kappa_score(seg1, seg2)
         f1 = f1_score(seg1, seg2, average='macro', labels=labels)
-        return 0.5 * kappa + 0.5 * f1
+        return 0.9 * kappa + 0.1 * f1
     else:
         raise ValueError("Invalid method. Choose from 'kappa', 'f1', or 'both'.")
 

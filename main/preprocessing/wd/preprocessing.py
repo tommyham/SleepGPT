@@ -227,9 +227,9 @@ def align_psg_ums(psg_signal, ums_signal, labels, auto_labels, save_root, sub_na
                                                                                                            plot=plot,
                                                                                                            save=save)
         # best_idx = best_idx - 150
-        if subject_name in manual_dict.keys():
-            best_idx = psg_start + manual_dict[subject_name]
-            logger.info(f'{subject_name}: manual - {manual_dict[subject_name]}, best_idx: {best_idx}')
+        # if subject_name in manual_dict.keys():
+        #     best_idx = psg_start + manual_dict[subject_name]
+        #     logger.info(f'{subject_name}: manual - {manual_dict[subject_name]}, best_idx: {best_idx}')
         # best_idx = psg_start + 510
 
         if plot is True:
@@ -424,7 +424,7 @@ def main(items, root_path, psg_root_path, ums_root_path, logger):
                 ums_data = np.load(ums_path)
             except:
                 continue
-            # ums_len = float(len(ums_data)/1)
+            ums_len = float(len(ums_data)/1)
             # overlapping_path = os.path.join(root_path, 'data', sub_name)
             # try:
             #     with h5py.File(os.path.join(overlapping_path, 'data.h5'), 'r') as hf:
@@ -462,8 +462,17 @@ def main(items, root_path, psg_root_path, ums_root_path, logger):
                 logger.info(f"{len(ums_data)}, {len(psg_signal)}")
                 psg_aligned, ums_aligned, offset_sec_adjusted, ums_st_ed, offset_labels, stage_sim = align_psg_ums(
                     psg_signal, ums_data, labels, ums_labels,
-                    using_multi_f='joint_matching', plot=True, save_root=save_root, sub_name='plot_figures', save=True,
+                    using_multi_f='joint_matching', plot=False, save_root=save_root, sub_name='plot_figures', save=True,
                     subject_name=sub_name)
+                records.append({
+                    "name": sub_name,
+                    "ums_st": ums_st_ed[0],
+                    "ums_ed": ums_st_ed[1],
+                    "psg_st": ums_st_ed[2],
+
+                    "psg_ed": ums_st_ed[3]
+                })
+                print(f"ums_st_ed :  {ums_st_ed}")
                 offset_labels = np.array(offset_labels)
                 stage_sims.append({'sub_name': sub_name, 'scores': stage_sim})
                 # 原始采样率 & 目标采样率
@@ -512,29 +521,29 @@ def main(items, root_path, psg_root_path, ums_root_path, logger):
                 # plt.show()
 
                 # 3. 划分为 epochs（每段 30s * 100Hz = 3000 点）
-                num_epochs = len(ums_filt_ds) // target_len
-                ums_epochs = ums_filt_ds[:num_epochs * target_len].reshape(num_epochs, target_len)
-                ums_aligned = ums_aligned.reshape(num_epochs, -1)
-                # ums_filt_ds = ums_filt_ds[:num_epochs * target_len]
-                # ums_epochs = ums_rawdata_ds.reshape(num_epochs, target_len)  # shape: (N, 3000)
-                assert num_epochs == len(offset_labels), f'{num_epochs}, {len(offset_labels)}'
-                assert num_epochs == len(ods_label), f'{num_epochs}, {len(ods_label)}'
-                assert ums_aligned.shape[1] == 30,  f'{ums_aligned.shape[1]}'
-                # 4. 筛选有效标签
-                valid_idx = offset_labels != -1
-                ums_epochs = ums_epochs[valid_idx]
-                offset_labels = offset_labels[valid_idx]
-                ods_label = ods_label[valid_idx]
-                ums_aligned = ums_aligned[valid_idx]
-                # 5. 保存到 HDF5 文件
-                h5_path = f"{save_root}/data.h5"
-                os.makedirs(save_root, exist_ok=True)
-                with h5py.File(h5_path, 'w') as f:
-                    f.create_dataset('signal', data=ums_epochs, compression='gzip')
-                    f.create_dataset('stage', data=offset_labels.astype(np.int32))
-                    f.create_dataset('spo2',  data=ums_aligned, compression='gzip')
-                    f.create_dataset('ods',  data=ods_label.astype(np.int32))
-                    f.create_dataset('best_idx', data=ums_st_ed)
+                # num_epochs = len(ums_filt_ds) // target_len
+                # ums_epochs = ums_filt_ds[:num_epochs * target_len].reshape(num_epochs, target_len)
+                # ums_aligned = ums_aligned.reshape(num_epochs, -1)
+                # # ums_filt_ds = ums_filt_ds[:num_epochs * target_len]
+                # # ums_epochs = ums_rawdata_ds.reshape(num_epochs, target_len)  # shape: (N, 3000)
+                # assert num_epochs == len(offset_labels), f'{num_epochs}, {len(offset_labels)}'
+                # assert num_epochs == len(ods_label), f'{num_epochs}, {len(ods_label)}'
+                # assert ums_aligned.shape[1] == 30,  f'{ums_aligned.shape[1]}'
+                # # 4. 筛选有效标签
+                # valid_idx = offset_labels != -1
+                # ums_epochs = ums_epochs[valid_idx]
+                # offset_labels = offset_labels[valid_idx]
+                # ods_label = ods_label[valid_idx]
+                # ums_aligned = ums_aligned[valid_idx]
+                # # 5. 保存到 HDF5 文件
+                # h5_path = f"{save_root}/data.h5"
+                # os.makedirs(save_root, exist_ok=True)
+                # with h5py.File(h5_path, 'w') as f:
+                #     f.create_dataset('signal', data=ums_epochs, compression='gzip')
+                #     f.create_dataset('stage', data=offset_labels.astype(np.int32))
+                #     f.create_dataset('spo2',  data=ums_aligned, compression='gzip')
+                #     f.create_dataset('ods',  data=ods_label.astype(np.int32))
+                #     f.create_dataset('best_idx', data=ums_st_ed)
 
             except Exception as e:
                 logger.exception(f'Exception: {e}, {psg_path}')

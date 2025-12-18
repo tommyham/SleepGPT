@@ -80,13 +80,12 @@ def main():
                 files_dict[int(name_index)].append(name_index)
             names.append(sub)
             sub_name_list = sub.split('/')
-            sub_name_list[6] = 'Aug_Random'
-            sub_aug_name = os.path.join(*sub_name_list)
+            sub_name_list[7] = 'Aug_Random'
+            sub_aug_name = '/' + os.path.join(*sub_name_list)
             aug_names.append(sub_aug_name)
             name_index += 1
     print(f'The sum of subjects is : {len(files_dict)}')
-    res = {}
-    res_aug = {}
+
     for name in names:
         print(f'------{name}-------')
         tmp = 0
@@ -166,12 +165,12 @@ def main():
     #
     #     np.save(file_name, arr=res, allow_pickle=True)
     #     np.save(file_aug_name, arr=res_aug, allow_pickle=True)
-
     for portion in [1, 2, 5, 12]:
         subset_items = training_files[:portion]
         file_name = os.path.join(args.data_dir, 'SS2', f'Aug_{portion}', )
         file_aug_name = os.path.join(args.data_dir, 'Aug_Random', f'Aug_{portion}', )
-
+        res = {}
+        res_aug = {}
         for i in range(1):
             res[f'train_{i}'] = {}
             res[f'train_{i}']['names'] = []
@@ -183,7 +182,7 @@ def main():
             res[f'val_{i}'] = {}
             res[f'val_{i}']['names'] = []
             res[f'val_{i}']['nums'] = []
-            for ds_idx in test_files:
+            for ds_idx in validation_files:
                 for tn_idx in files_dict[ds_idx]:
                     res[f'val_{i}']['names'].append(names[tn_idx])
                     res[f'val_{i}']['nums'].append(nums[tn_idx])
@@ -195,12 +194,14 @@ def main():
                 for tn_idx in files_dict[ds_idx]:
                     res[f'test_{i}']['names'].append(names[tn_idx])
                     res[f'test_{i}']['nums'].append(nums[tn_idx])
+
             print(f'train name : {res[f"train_{i}"]["names"]}')
             print(f'test name : {res[f"test_{i}"]["names"]}')
 
             res_aug[f'train_{i}'] = {}
             res_aug[f'train_{i}']['names'] = []
             res_aug[f'train_{i}']['nums'] = []
+
             for ds_idx in subset_items:
                 for tn_idx in files_dict[ds_idx]:
                     res_aug[f'train_{i}']['names'].append(aug_names[tn_idx])
@@ -212,7 +213,8 @@ def main():
             res_aug[f'test_{i}']['names'] = []
             res_aug[f'test_{i}']['nums'] = []
             print(f'train name : {res_aug[f"train_{i}"]["names"]}')
-        np.save(file_name, arr=res, allow_pickle=True)
+            print(f'test name : {res_aug[f"test_{i}"]["names"]}')
+        # np.save(file_name, arr=res, allow_pickle=True)
         np.save(file_aug_name, arr=res_aug, allow_pickle=True)
 
 if __name__ == '__main__':

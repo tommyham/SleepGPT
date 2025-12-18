@@ -53,7 +53,7 @@ channels_to_display = np.array([[ 'EOG', 'Fpz', 'Pz'],
                        ['C3', 'C4', 'EOG', 'O1'],
                        ['C3', 'C4', 'EOG', 'F3', 'O1', 'Pz'],
                        ['C3', 'C4','EOG'],
-                       ['C3', 'C4',  'EOG', 'F3', 'O1']])
+                       ['C3', 'C4',  'EOG', 'F3', 'O1']], dtype=object)
 def prepare_data(data):
     rows = []
     for dataset_name in sorted(data):
@@ -178,15 +178,53 @@ def remove_outliers_iqr(df, column):
     return df_clean
 
 
-def main(ckpt_path='../../temp_log/violin.ckpt'):
+
+dataset_rename = {
+    'EDF': 'SleepEDF-78',
+    'MASS1': 'MASS-SS1',
+    'MASS2': 'MASS-SS2',
+    'MASS3': 'MASS-SS3',
+    'MASS4': 'MASS-SS4',
+    'MASS5': 'MASS-SS5',
+    'SHHS1': 'SHHS-1',
+    'physio_train': 'PC2018'
+}
+
+def main(ckpt_path='../../temp_log/other/violin.ckpt'):
     checkpoint = torch.load(ckpt_path, map_location=torch.device('cpu'))
     df = prepare_data(checkpoint)
     df.loc[(df['Dataset'] == 'EDF') & (df['Channel'] == 2), 'Value'] = 0
     df['Channel'] = df['Channel'].map(channel_map)
-    print(df.head(20))
-    plot_violin(df, )
-    # plot_bar_emg(df)
-    # plot_box_emg(df)
+
+    # ✅ 修改 Dataset 名称
+    df['Dataset'] = df['Dataset'].map(dataset_rename).fillna(df['Dataset'])
+
+    # ✅ 仅保留 'loss' 类型的数据
+    df_loss = df[df['Loss Type'] == 'loss'].copy()
+
+    # ===== 保存 violin 源数据 =====
+    save_dir = '/Users/hwx_admin/Sleep/result/heatmap/doc/fig2'
+    import os
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, 'violin_source_data.xlsx')
+
+    try:
+        with pd.ExcelWriter(save_path, engine='openpyxl') as writer:
+            df_loss.to_excel(writer, index=False, sheet_name='loss')
+        print(f'[Saved] Violin source data (loss only) saved to {save_path}')
+    except ImportError:
+        csv_path = save_path.replace('.xlsx', '.csv')
+        df_loss.to_csv(csv_path, index=False)
+        print(f'[Saved CSV] Violin source data (loss only) saved to {csv_path}')
+
+    # ===== 绘制 violin 图 =====
+    plot_violin(df_loss)
+
+    # ===== 绘制 violin 图 =====
+    # plot_violin(df_loss)
+
+    # 绘图
+    # plot_violin(df)
 
 
 if __name__ == '__main__':
