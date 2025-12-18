@@ -319,7 +319,7 @@ class Model(LightningModule):
             self.weight = config['CE_Weight']
             self.spindle_pred_proj = heads.Spindle_Head(self.num_features, self.transformer.patch_size,
                                                         Use_FPN=config['Use_FPN'],
-                                                        decoder_depth=config['Even_decoder_depth'],
+                                                        decoder_depth=config['Event_decoder_depth'],
                                                         enc_dim=config['Event_enc_dim'],
                                                         dpr=config["drop_path_rate"], num_queries=config['num_queries'],
                                                         seq_len=self.patch_time * 100, FPN_resnet=config['FPN_resnet'])
