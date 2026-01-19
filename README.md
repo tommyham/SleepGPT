@@ -164,7 +164,12 @@ See [`masked_reconstruction_demo.md`](docs/masked_reconstruction_demo.md) for a 
 If you use SleepGPT in your research, please cite:
 
 ```bibtex
-@article{
+@article{huang2026unified,
+  title={A unified time-frequency foundation model for sleep decoding},
+  author={Huang, Weixuan and Wang, Yan and Cheng, Hanrong and Xu, Wei and Li, Tingyue and Wu, Xiuwen and Xu, Hui and Liao, Pan and Cui, Zaixu and Zou, Qihong and others},
+  journal={Nature Communications},
+  year={2026},
+  publisher={Nature Publishing Group UK London}
 }
 ```
 
