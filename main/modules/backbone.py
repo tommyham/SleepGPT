@@ -30,7 +30,7 @@ from . import mixup
 import pynvml
 from . import vit
 from . import Swin_transformer
-from main.utils import cal_F1_score, cal_Precision, cal_RecallP
+from main.utils import cal_F1_score, cal_Precision, cal_Recall
 import torch.distributed as dist
 from main.modules.long_net import LongNetTransformer
 from . import WearableAdapter
@@ -319,8 +319,8 @@ class Model(LightningModule):
             self.weight = config['CE_Weight']
             self.spindle_pred_proj = heads.Spindle_Head(self.num_features, self.transformer.patch_size,
                                                         Use_FPN=config['Use_FPN'],
-                                                        decoder_depth=config['Event_decoder_depth'],
                                                         enc_dim=config['Event_enc_dim'],
+                                                        decoder_depth=config['Event_decoder_depth'],
                                                         dpr=config["drop_path_rate"], num_queries=config['num_queries'],
                                                         seq_len=self.patch_time * 100, FPN_resnet=config['FPN_resnet'])
         if config['loss_names']['Apnea'] > 0:
