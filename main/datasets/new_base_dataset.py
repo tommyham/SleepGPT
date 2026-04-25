@@ -494,7 +494,7 @@ class Aug_BaseDataset(data.Dataset):
                         x = self.get_epochs(tables['x'][0], need_norm=need_norm)
                     assert torch.max(x['x'][0]) < 300000, f"x > 200000 : {torch.max(x['x'][0])} need_norm: {need_norm}"
                     assert x['x'][0].shape[1] == 3000 or x['x'][0].shape[1] == 2000, f"{idx_2_name}, {x['x'][0].shape[1]}"
-                    epochs.append(x['x'][0])
+                    epochs.append(torch.nan_to_num(x['x'][0], nan=0.0, posinf=0.0, neginf=0.0))
                     channel.append(x['x'][1])
                     if self.stage:
                         stage = self.get_stage(tables['stage'])
@@ -517,7 +517,7 @@ class Aug_BaseDataset(data.Dataset):
                         x = self.get_epochs(data_dict['x'], data_dict['good_channels'], need_norm)
                     else:
                         x = self.get_epochs(data_dict['x'], need_norm=need_norm)
-                    epochs.append(x['x'][0])
+                    epochs.append(torch.nan_to_num(x['x'][0], nan=0.0, posinf=0.0, neginf=0.0))
                     channel.append(x['x'][1])
                     if self.stage and 'stage' in self.column_names:
                         stage = self.get_stage(data_dict['stage'])
