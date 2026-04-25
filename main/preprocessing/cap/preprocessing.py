@@ -219,16 +219,18 @@ def resolve_duplicates(channel_dict):
 
 
 def process(pathology=None, local_test=False):
+    base_dir="/mnt/e/DataSet/Local/OpenData"
+    cap_dir = os.path.join(base_dir, 'capslpdb')
     if local_test is True:
-        Root_path = '/Volumes/T7/data/cap-sleep-database-1.0.0'
-        log_filename = './cap.log'
-        store_path = f'/Volumes/T7/data/cap/process/{pathology}'
+        Root_path = os.path.join(cap_dir, '1.0.0')
+        log_filename = os.path.join(Root_path, 'cap.log')
+        store_path = os.path.join(cap_dir, f'process/{pathology}')
         os.makedirs(store_path, exist_ok=True)
     else:
-        Root_path = '/data/MGH/'
-        os.makedirs('/mnt/LOG_FILE/LOG_BDSP/', exist_ok=True)
-        log_filename = f'/mnt/LOG_FILE/LOG_BDSP/{pathology}/process.log'
-        store_path = f'/mnt/myvol/data/MGH_NEW/{pathology}'
+        Root_path = os.path.join(base_dir, 'MGH')
+        os.makedirs(os.path.join(base_dir, 'LOG_FILE', 'LOG_BDSP'), exist_ok=True)
+        log_filename = os.path.join(base_dir, 'LOG_FILE', 'LOG_BDSP', f'{pathology}', 'process.log')
+        store_path = os.path.join(base_dir, 'myvol', 'data', 'MGH_NEW', f'{pathology}')
         os.makedirs(store_path, exist_ok=True)
     pattern_edf = re.compile(rf"{pathology}\d{{1,2}}\.edf$")
     pattern_text = re.compile(rf"{pathology}\d{{1,2}}\.txt$")
@@ -256,6 +258,10 @@ def process(pathology=None, local_test=False):
     for i in tqdm(range(1, len(path_sig_list))):
         filename = os.path.join(store_path, 'subject_' + str(i))
         os.makedirs(filename, exist_ok=True)
+        h5_filename = f"{filename}/data.h5"
+        if os.path.exists(h5_filename):
+            logger.info(f"File {h5_filename} already exists and is valid. Skipping.")
+            continue
         logger.info(f'store_path: {filename}')
         signal_path = path_sig_list[i]
         anno_path = path_anno_list[i]
@@ -352,7 +358,6 @@ def process(pathology=None, local_test=False):
         stage = anno[:, 0]
         pathology = pathology
 
-        h5_filename = f"{filename}/data.h5"
         data_dict = {
             'signal': signal,
             'stage': stage,
@@ -364,5 +369,5 @@ def process(pathology=None, local_test=False):
         gc.collect()
 
 if __name__ == '__main__':
-    for pathology in ['plm']:
+    for pathology in ['plm','brux','ins','n','narco','nfle','rbd','sdb']:
         process(pathology=pathology, local_test=True)

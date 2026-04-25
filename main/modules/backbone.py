@@ -1699,10 +1699,10 @@ class Model(LightningModule):
                              sync_dist=True)
                     self.log(f"{loss_name}/{phase}/kappa_score", kappa, prog_bar=True, on_epoch=True,
                              sync_dist=True)
-                    self.log(f"{loss_name}/{phase}/precision", precision, prog_bar=True, on_epoch=True,
-                             sync_dist=True)
-                    self.log(f"{loss_name}/{phase}/recall", recall, prog_bar=True, on_epoch=True,
-                             sync_dist=True)
+                    # self.log(f"{loss_name}/{phase}/precision", precision, prog_bar=True, on_epoch=True,
+                    #          sync_dist=True)
+                    # self.log(f"{loss_name}/{phase}/recall", recall, prog_bar=True, on_epoch=True,
+                    #          sync_dist=True)
                     getattr(self, f"{phase}_{loss_name}_conf").reset()
                     metric = value_acc + macro_f1
 

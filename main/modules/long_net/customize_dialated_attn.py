@@ -80,7 +80,8 @@ class DilatedAttention(nn.Module):
         head_padding = padding_to_multiple_of(self.num_heads, ratio)
         if padding > 0 or head_padding > 0:
             x = F.pad(x, (0, 0, 0, head_padding, 0, padding), value=0.)
-            attn_matrix = F.pad(x, (0, 0, 0, head_padding, 0, padding), value=0.)
+            # attn_matrix = F.pad(x, (0, 0, 0, head_padding, 0, padding), value=0.)
+            attn_matrix = F.pad(attn_matrix, (0, head_padding, 0, padding), value=0.)
         x = rearrange(x, 'b (l r1) (r2 h) d -> b l h d r1 r2', r1=ratio, r2=ratio)
         attn_matrix = rearrange(attn_matrix, 'b (l r1) (r2 h)  -> b l h  r1 r2', r1=ratio, r2=ratio)
         x = torch.diagonal(x, offset=0, dim1=4, dim2=5)

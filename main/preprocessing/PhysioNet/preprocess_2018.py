@@ -41,15 +41,18 @@ ann2label = {
 }
 EPOCH_SEC_SIZE = 30
 
-output_dir = '/data'
+base_dir="/mnt/e/DataSet/Local/OpenData"
+
+output_dir = os.path.join(base_dir, 'data')
 select_ch = ['EOG horizontal', 'EEG Fpz-Cz', 'EEG Pz-Oz', ]
 
 
-log_file = '/data/info_ch_extract.log'
+log_file = os.path.join(output_dir, 'info_ch_extract.log')
 output_dir = os.path.join(output_dir, 'sleepedf_2018.log')
 os.makedirs(output_dir, exist_ok=True)
 log_file = os.path.join(os.path.join(output_dir, log_file))
-Data_dir = ['/data/sleep-edf-database-expanded-1.0.0/sleep-telemetry']
+# Data_dir = ['/data/sleep-edf-database-expanded-1.0.0/sleep-telemetry']
+Data_dir = [os.path.join(base_dir, 'sleep-telemetry')]
 # Create logger
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -85,6 +88,7 @@ for data_dir in Data_dir:
         anno = mne.read_annotations(ann_fname)
         psg = mne.io.read_raw_edf(psg_fname)
         psg.pick(select_ch)
+        sampling_rate = psg.info['sfreq']
         logger.info("Loading ...")
         logger.info("Signal file: {}".format(psg_fname))  # read the raw data
         logger.info("Annotation file: {}".format(ann_fname))  # read the annotation
@@ -96,15 +100,15 @@ for data_dir in Data_dir:
         h_raw = reader_raw.header
         f.close()
         raw_start_dt = datetime.strptime(h_raw['date_time'], "%Y-%m-%d %H:%M:%S")
+        # raw_start_dt=psg.info['meas_date']
 
         # Read annotation and its header
         f = open(ann_fname, 'r', errors='ignore')
         reader_ann = dhedfreader.BaseEDFReader(f)
         reader_ann.read_header()
         h_ann = reader_ann.header
-        _, _, ann = zip(*reader_ann.records())
-        f.close()
         ann_start_dt = datetime.strptime(h_ann['date_time'], "%Y-%m-%d %H:%M:%S")
+        f.close()
 
         # Assert that raw and annotation files start at the same time
         assert raw_start_dt == ann_start_dt
@@ -115,24 +119,26 @@ for data_dir in Data_dir:
         remove_idx = []  # indicies of the data that will be removed
         labels = []  # indicies of the data that have labels
         label_idx = []
-        for a in ann[0]:
-            onset_sec, duration_sec, ann_char = a
-            ann_str = "".join(ann_char)
-            label = ann2label[ann_str[2:-1]]
-            if label != UNKNOWN:
+        for onset_sec, duration_sec, ann_str in zip(anno.onset, anno.duration, anno.description):
+            label = ann2label.get(ann_str)
+            if label is None:
+                logger.warning("Skip unknown annotation: {}".format(ann_str))
+                continue
+
+            if label != UNK:
                 if duration_sec % EPOCH_SEC_SIZE != 0:
                     raise Exception("Something wrong")
                 duration_epoch = int(duration_sec / EPOCH_SEC_SIZE)
-                label_epoch = np.ones(duration_epoch, dtype=np.int) * label
+                label_epoch = np.ones(duration_epoch, dtype=np.int32) * label
                 labels.append(label_epoch)
-                idx = int(onset_sec * sampling_rate) + np.arange(duration_sec * sampling_rate, dtype=np.int)
+                idx = int(onset_sec * sampling_rate) + np.arange(int(duration_sec * sampling_rate), dtype=np.int64)
                 label_idx.append(idx)
 
                 print("Include onset:{}, duration:{}, label:{} ({})".format(
                     onset_sec, duration_sec, label, ann_str
                 ))
             else:
-                idx = int(onset_sec * sampling_rate) + np.arange(duration_sec * sampling_rate, dtype=np.int)
+                idx = int(onset_sec * sampling_rate) + np.arange(int(duration_sec * sampling_rate), dtype=np.int64)
                 remove_idx.append(idx)
 
                 print("Remove onset:{}, duration:{}, label:{} ({})".format(

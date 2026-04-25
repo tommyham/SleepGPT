@@ -5,9 +5,11 @@ import glob
 import logging
 import h5py
 def main(dataset_num):
+    base_dir="/mnt/e/DataSet/Local/OpenData"
+    cap_dir = os.path.join(base_dir, 'capslpdb')
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str,
-                        default="/Volumes/T7/data/cap",
+                        default=cap_dir,
                         # default="/home/cuizaixu_lab/huangweixuan/data",
                         help="File path to the Sleep-EDF dataset.")
     parser.add_argument("--output_dir", type=str, default="process",
@@ -28,8 +30,8 @@ def main(dataset_num):
     file_handler = logging.FileHandler(args.log_file)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
-    for pathology in ['n','nfle', 'rbd']:
-    # for pathology in ['n', 'ins', 'narco', 'nfle', 'plm', 'rbd', 'sdb']:
+    # for pathology in ['n','nfle', 'rbd']:
+    for pathology in ['n', 'ins', 'narco', 'nfle', 'plm', 'rbd', 'sdb']:
         base_k_path = os.path.join(args.output_dir, f'{pathology}')
         names = []
         nums = []
