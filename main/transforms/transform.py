@@ -108,9 +108,19 @@ class normalize:
             # return (x - min_val + 1e-6) / (1e-6 + max_val - min_val)
             return x
         elif x.shape[0] == 4:
-            return (x - self.mu4.unsqueeze(-1)) / self.std4.unsqueeze(-1)
+            std = self.std4.unsqueeze(-1)
+            return torch.where(
+                std != 0,
+                torch.nan_to_num((x - self.mu4.unsqueeze(-1)) / std, nan=0.0, posinf=0.0, neginf=0.0),
+                torch.zeros_like(x),
+            )
         else:
-            return (x - self.mu.unsqueeze(-1)) / self.std.unsqueeze(-1)
+            std = self.std.unsqueeze(-1)
+            return torch.where(
+                std != 0,
+                torch.nan_to_num((x - self.mu.unsqueeze(-1)) / std, nan=0.0, posinf=0.0, neginf=0.0),
+                torch.zeros_like(x),
+            )
 
 class unnormalize:
     def __init__(self):
