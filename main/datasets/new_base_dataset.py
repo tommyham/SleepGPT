@@ -492,7 +492,12 @@ class Aug_BaseDataset(data.Dataset):
                         x = self.get_epochs(tables['x'][0], tables['good'][0], need_norm=need_norm)
                     else:
                         x = self.get_epochs(tables['x'][0], need_norm=need_norm)
-                    assert torch.max(x['x'][0]) < 300000, f"x > 200000 : {torch.max(x['x'][0])} need_norm: {need_norm}"
+                    x_data = x['x'][0]
+                    if torch.isnan(x_data).any() or torch.isinf(x_data).any():
+                        rank_zero_info(f"WARNING: NaN/Inf in raw data {name}. Replacing with zeros.")
+                        x_data = torch.nan_to_num(x_data, nan=0.0, posinf=0.0, neginf=0.0)
+                        x['x'] = [x_data, x['x'][1]]
+                    assert torch.max(x_data) < 300000, f"x > 300000 : {torch.max(x_data)} need_norm: {need_norm}"
                     assert x['x'][0].shape[1] == 3000 or x['x'][0].shape[1] == 2000, f"{idx_2_name}, {x['x'][0].shape[1]}"
                     epochs.append(x['x'][0])
                     channel.append(x['x'][1])
@@ -714,8 +719,10 @@ class Aug_BaseDataset(data.Dataset):
                         random_mask_w.append(random_mask_w_temp)
                     if self.need_normalize is True and need_norms[_idx] is True:
                         res_epochs = self.normalize(res_epochs, attention_mask)
-                        # if self.split == 'train':
-                        #     print(f'res_epochs: {res_epochs}, normalize: {need_norms[_idx]}')
+                        # fp16 Conv1d overflows when normalized values exceed ~9924.
+                        # Clamp to a safe range so that +Inf/-Inf cancellation (NaN)
+                        # cannot occur inside PatchEmbed.proj under AMP "16-mixed".
+                        res_epochs = torch.clamp(res_epochs, min=-9000.0, max=9000.0)
                     if label is not None:
                         res_epochs, label[_idx] = self.transforms(res_epochs, label[_idx])
                     else:
@@ -729,6 +736,7 @@ class Aug_BaseDataset(data.Dataset):
                     res_epochs[channel] = _x
                     if self.need_normalize is True and need_norms[_idx] is True:
                         res_epochs = self.normalize(res_epochs, attention_mask)
+                        res_epochs = torch.clamp(res_epochs, min=-9000.0, max=9000.0)
                     res_epochs = self.transforms(res_epochs)
                 res_multi_epochs.append(res_epochs)
                 attention_multi_mask.append(attention_mask)

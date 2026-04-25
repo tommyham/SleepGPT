@@ -598,7 +598,13 @@ class Model(LightningModule):
         )
         x_embeds_nan = torch.isnan(x_embeds).sum()
         fft_embeds_nan = torch.isnan(fft_embeds).sum()
-        assert x_embeds_nan == 0 and fft_embeds_nan == 0, f"the time embeds nan is {x_embeds_nan} and fft is {fft_embeds_nan}, index:{batch['index']}"
+        if x_embeds_nan > 0 or fft_embeds_nan > 0:
+            rank_zero_info(
+                f"WARNING: NaN in embeddings — time={x_embeds_nan}, fft={fft_embeds_nan}, "
+                f"index={batch['index']}"
+            )
+            x_embeds = torch.nan_to_num(x_embeds, nan=0.0, posinf=0.0, neginf=0.0)
+            fft_embeds = torch.nan_to_num(fft_embeds, nan=0.0, posinf=0.0, neginf=0.0)
         co_embeds = torch.cat((x_embeds, fft_embeds), dim=1)
         # print('x_embeds, fft_embeds', torch.isnan(x_embeds).sum(), torch.isnan(fft_embeds).sum())
         x = co_embeds

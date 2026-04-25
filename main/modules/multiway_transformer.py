@@ -878,7 +878,15 @@ class MultiWayTransformer(nn.Module):
             # print(torch.isnan(std).sum())
             # print(std[torch.where(std<0.01)], torch.where(std<0.01))
             std = std.unsqueeze(-1)
-            log_magnitude = torch.where(std!=0, (log_magnitude - mean.unsqueeze(-1)) / std, 0)
+            # torch.where evaluates both branches before applying the mask, so
+            # dividing by std when std==0 would produce Inf/NaN even though those
+            # positions are ultimately masked out.  Use a safe denominator instead.
+            safe_std = torch.where(std != 0, std, torch.ones_like(std))
+            log_magnitude = torch.where(
+                std != 0,
+                (log_magnitude - mean.unsqueeze(-1)) / safe_std,
+                torch.zeros_like(log_magnitude),
+            )
             res.append(log_magnitude)
             # print(torch.isnan((log_magnitude - mean.unsqueeze(-1)) / std.unsqueeze(-1)).sum())
 
