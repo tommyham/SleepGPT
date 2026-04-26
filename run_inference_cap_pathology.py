@@ -71,11 +71,11 @@ def build_config(args: argparse.Namespace) -> dict:
         "random_seed": [3407],
         "precision": "16-mixed",
         "mode": "Finetune_cap_all",
-        "kfold": 4,  # matches run_ft_cap_pathology_kfold.py (overridden per fold in run_fold())
+        "kfold": None,  # overridden per fold in run_fold()
 
         # ── Batch / training schedule (not used for inference) ───────────────
         "batch_size": args.batch_size,
-        "max_epoch": 30,
+        "max_epoch": 50,
         "max_steps": -1,
         "accum_iter": 2,
         "start_epoch": 0,
@@ -98,19 +98,19 @@ def build_config(args: argparse.Namespace) -> dict:
         },
         "transform_keys": {"keys": [[0, 1, 2, 3, 4, 6]], "mode": ["shuffle"]},
         "num_workers": args.num_workers,
-        "drop_path_rate": 0.5,
+        "drop_path_rate": 0.1,
         "patch_size": 200,
-        "lr_mult": 20,
+        "lr_mult": 1,
         "blr": 1.5e-5,
         "end_lr": 0,
-        "warmup_steps": 0.1,
-        "smoothing": 0.1,
+        "warmup_steps": 5,
+        "smoothing": 0.0,
         "mixup": 0,
 
         # ── Directories ─────────────────────────────────────────────────────
         "output_dir": "./checkpoint/2201210064/experiments",
         "log_dir": "./checkpoint_log/2201210064/experiments",
-        "load_path": None,   # overridden in load_model()
+        "load_path": "",   # overridden in load_model()
         "kfold_load_path": "",
         "resume_ckpt_path": "",
 
@@ -119,11 +119,11 @@ def build_config(args: argparse.Namespace) -> dict:
         "optim": "adamw",
         "clip_grad": False,
         "weight_decay": 0.05,
-        "lr": 5e-4,
-        "min_lr": 0,
-        "warmup_lr": 0,
-        "layer_decay": 0.75,
-        "get_param_method": "layer_decay",
+        "lr": None,
+        "min_lr": 1e-6,
+        "warmup_lr": 2.5e-7,
+        "layer_decay": 1.0,
+        "get_param_method": "no_layer_decay",
         "Lambda": 1.0,
         "poly": False,
         "gradient_clip_val": 1.0,
@@ -132,17 +132,17 @@ def build_config(args: argparse.Namespace) -> dict:
         "device": "cuda" if use_cuda else "cpu",
         "deepspeed": False,
         "dist_on_itp": False,
-        "num_gpus": 1,
-        "num_nodes": 1,
+        "num_gpus": -1,
+        "num_nodes": -1,
 
         # ── Evaluation flags ────────────────────────────────────────────────
         "dist_eval": False,
-        "eval": True,
+        "eval": False,
         "get_recall_metric": False,
         "limit_val_batches": 1.0,
         "limit_train_batches": 1.0,
-        "val_check_interval": 0.5,
-        "check_val_every_n_epoch": 1,
+        "val_check_interval": 1000,
+        "check_val_every_n_epoch": None,
         "fast_dev_run": 7,
 
         # ── Architecture ────────────────────────────────────────────────────
@@ -156,7 +156,7 @@ def build_config(args: argparse.Namespace) -> dict:
         "time_only": False,
         "fft_only": False,
         "loss_function": "l1",
-        "resume_during_training": 0,
+        "resume_during_training": None,
         "use_triton": False,
         "use_relative_pos_emb": False,
         "use_global_fft": True,
@@ -208,7 +208,7 @@ def build_config(args: argparse.Namespace) -> dict:
         "aug_dir": None,
         "aug_prob": 0.0,
         "kfold_test": None,
-        "grad_name": "partial_10",
+        "grad_name": "all",
         "save_top_k": 2,
         "show_transform_param": False,
         "mask_strategies": None,
@@ -220,7 +220,7 @@ def build_config(args: argparse.Namespace) -> dict:
         "return_alpha": False,
 
         # ── Classification ───────────────────────────────────────────────────
-        "num_classes": NUM_CLASSES,
+        "num_classes": 5,
         "stage1_epoch": (5,),
         "stage2_epoch": 10,
         "freeze_stage": False,
@@ -610,7 +610,7 @@ def main() -> None:
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=8,
+        default=169,
         help="Batch size for inference. Default: %(default)s",
     )
     parser.add_argument(
