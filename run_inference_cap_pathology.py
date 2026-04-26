@@ -75,7 +75,7 @@ def build_config(args: argparse.Namespace) -> dict:
 
         # ── Batch / training schedule (not used for inference) ───────────────
         "batch_size": args.batch_size,
-        "max_epoch": 30,
+        "max_epoch": 50,
         "max_steps": -1,
         "accum_iter": 2,
         "start_epoch": 0,
@@ -98,12 +98,12 @@ def build_config(args: argparse.Namespace) -> dict:
         },
         "transform_keys": {"keys": [[0, 1, 2, 3, 4, 6]], "mode": ["shuffle"]},
         "num_workers": args.num_workers,
-        "drop_path_rate": 0.5,
+        "drop_path_rate": 0.1,
         "patch_size": 200,
-        "lr_mult": 20,
+        "lr_mult": 1,
         "blr": 1.5e-5,
         "end_lr": 0,
-        "warmup_steps": 0.1,
+        "warmup_steps": 5,
         "smoothing": 0.1,
         "mixup": 0,
 
@@ -131,7 +131,7 @@ def build_config(args: argparse.Namespace) -> dict:
         # ── Device ──────────────────────────────────────────────────────────
         "device": "cuda" if use_cuda else "cpu",
         "deepspeed": False,
-        "dist_on_itp": False,
+        "dist_on_itp": True,
         "num_gpus": 1,
         "num_nodes": 1,
 
