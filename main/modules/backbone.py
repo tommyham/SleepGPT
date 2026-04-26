@@ -405,7 +405,31 @@ class Model(LightningModule):
                 rank_zero_info("%s = %s" % (key, str(var.size())))
 
             rank_zero_info(config["loss_names"])
-            missing_keys, unexpected_keys = self.load_state_dict(state_dict, strict=False)
+
+            # Filter out keys whose shapes don't match the current model so that
+            # loading across architectures (e.g. large→base) degrades gracefully
+            # instead of raising a RuntimeError.
+            model_state = self.state_dict()
+            shape_mismatched_keys = []
+            filtered_state_dict = {}
+            for k, v in state_dict.items():
+                if k in model_state and v.shape != model_state[k].shape:
+                    shape_mismatched_keys.append(
+                        f"{k}: ckpt {tuple(v.shape)} vs model {tuple(model_state[k].shape)}"
+                    )
+                else:
+                    filtered_state_dict[k] = v
+
+            if shape_mismatched_keys:
+                rank_zero_info(
+                    "Skipped {} keys due to shape mismatch (checkpoint arch differs "
+                    "from current model arch):\n  {}".format(
+                        len(shape_mismatched_keys),
+                        "\n  ".join(shape_mismatched_keys),
+                    )
+                )
+
+            missing_keys, unexpected_keys = self.load_state_dict(filtered_state_dict, strict=False)
             rank_zero_info("missing_keys: {}".format(missing_keys))
             rank_zero_info("unexpected_keys: {}".format(unexpected_keys))
 
