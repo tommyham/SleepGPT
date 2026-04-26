@@ -208,7 +208,7 @@ class Model(LightningModule):
                     self.pooler = heads.Attn(self.num_features * 2, self.num_features * 2, reshape=False,
                                              channels=self.transformer.num_patches, double=False,
                                              channel_wise=False, return_alpha=self.return_alpha)
-                    self.decoder_transformer_block = LongNetTransformer(dim = self.decoder_features, depth=self.decoder_depth, dim_head=self.decoder_heads,
+                    self.decoder_transformer_block = LongNetTransformer(dim=self.decoder_features, in_chans=self.num_features * 2, depth=self.decoder_depth, dim_head=self.decoder_heads,
                                                                   num_patches=self.time_size * self.transformer.num_patches, dilated_ratios=config['longnet_dr'], segment_lengths=config['longnet_sl'],
                                                                 global_pool=self.longnet_pool
                                                                   )
@@ -282,6 +282,7 @@ class Model(LightningModule):
                                                  channels=self.transformer.num_patches, double=False,
                                                  channel_wise=False, return_alpha=self.return_alpha)
                         self.decoder_transformer_block = LongNetTransformer(dim=self.decoder_features,
+                                                                            in_chans=self.num_features * 2,
                                                                             depth=self.decoder_depth,
                                                                             dim_head=self.decoder_heads,
                                                                             num_patches=self.time_size * self.transformer.num_patches,
