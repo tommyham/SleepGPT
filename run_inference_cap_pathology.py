@@ -176,7 +176,7 @@ def build_config(args: argparse.Namespace) -> dict:
         # ── Decoder / pooler ────────────────────────────────────────────────
         "use_pooling": "longnet",
         "pool": None,
-        "decoder_features": 1024,
+        "decoder_features": 512,
         "decoder_depth": 4,
         "decoder_heads": 32,
         "decoder_selected_layers": "2-3",
@@ -247,7 +247,7 @@ def load_model(config: dict, checkpoint_path: str, device: str) -> Model:
     """Instantiate Model and load weights via the built-in load_pretrained_weight()."""
     cfg = dict(config)
     cfg["load_path"] = checkpoint_path
-    model = Model(cfg)
+    model = Model(cfg,num_classes=cfg["num_classes"])
     model.eval()
     model.to(device)
     return model
