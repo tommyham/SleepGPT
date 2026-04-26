@@ -71,7 +71,7 @@ def build_config(args: argparse.Namespace) -> dict:
         "random_seed": [3407],
         "precision": "16-mixed",
         "mode": "Finetune_cap_all",
-        "kfold": None,  # overridden per fold in run_fold()
+        "kfold": 4,  # overridden per fold in run_fold()
 
         # ── Batch / training schedule (not used for inference) ───────────────
         "batch_size": args.batch_size,
@@ -339,15 +339,19 @@ def run_inference_on_split(
             logits = logits["tf"]
         pred_labels = torch.argmax(logits, dim=-1).cpu()  # [B]
 
+        if model.time_size !=1:
+            pred_labels = torch.reshape(pred_labels,(len(pred_labels)//model.time_size,model.time_size))
+
         # True labels depend on the active task
         task = model.current_tasks[0] if model.current_tasks else "Pathology"
         if task == "CrossEntropy":
             # Stage_label: [B, time_size] after _preprocess_batch stacking
             # Use the last epoch in the window, matching backbone.py:1211 inference convention
-            if model.time_size != 1:
-                true_labels = batch["Stage_label"][:, -1].cpu()  # [B]
-            else:
-                true_labels = batch["Stage_label"].cpu()  # [B]
+            true_labels = batch["Stage_label"].cpu() # [B * time_size] → [B] by taking the last epoch's label for each window
+            # if model.time_size != 1:
+            #     true_labels = batch["Stage_label"][:, -1].cpu()  # [B]
+            # else:
+            #     true_labels = batch["Stage_label"].cpu()  # [B]
         else:
             # Pathology label is the same for all epochs in a window
             if model.time_size != 1:
@@ -365,19 +369,22 @@ def run_inference_on_split(
                 subject_id = raw_name
             else:
                 subject_id = int(raw_name.item()) if isinstance(raw_name, torch.Tensor) else int(raw_name)
-            true_label = int(true_labels[i].item())
-            # Skip MT epochs (stage=7) for CrossEntropy; they are not a valid sleep stage class
-            if task == "CrossEntropy" and true_label == 7:
-                continue
-            records.append(
-                {
-                    "subject_id": subject_id,
-                    "window_idx": subject_window_counter[subject_id],
-                    "true_label": true_label,
-                    "pred_label": int(pred_labels[i].item()),
-                }
-            )
-            subject_window_counter[subject_id] += 1
+            # true_label = int(true_labels[i].item())
+            # # Skip MT epochs (stage=7) for CrossEntropy; they are not a valid sleep stage class
+            # if task == "CrossEntropy" and true_label == 7:
+            #     continue
+            for pred,label in zip(pred_labels[i],true_labels[i]):
+                if label.item() == 7:  # Skip MT epochs for pathology as well, to be consistent with stage labels
+                    continue
+                records.append(
+                    {
+                        "subject_id": subject_id,
+                        "window_idx": subject_window_counter[subject_id],
+                        "true_label": int(label.item()),
+                        "pred_label": int(pred.item()),
+                    }
+                )
+                subject_window_counter[subject_id] += 1
 
     return records
 
