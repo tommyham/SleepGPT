@@ -71,7 +71,7 @@ def build_config(args: argparse.Namespace) -> dict:
         "random_seed": [3407],
         "precision": "16-mixed",
         "mode": "Finetune_cap_all",
-        "kfold": None,  # overridden per fold in run_fold()
+        "kfold": 4,  # matches run_ft_cap_pathology_kfold.py (overridden per fold in run_fold())
 
         # ── Batch / training schedule (not used for inference) ───────────────
         "batch_size": args.batch_size,
