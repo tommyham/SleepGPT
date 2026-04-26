@@ -360,7 +360,11 @@ def run_inference_on_split(
 
         for i in range(len(names)):
             raw_name = names[i]
-            subject_id = int(raw_name.item()) if isinstance(raw_name, torch.Tensor) else int(raw_name)
+            if isinstance(raw_name, str):
+                # Extract subject ID from filename, e.g. "n01_0000" → 1
+                subject_id = raw_name
+            else:
+                subject_id = int(raw_name.item()) if isinstance(raw_name, torch.Tensor) else int(raw_name)
             true_label = int(true_labels[i].item())
             # Skip MT epochs (stage=7) for CrossEntropy; they are not a valid sleep stage class
             if task == "CrossEntropy" and true_label == 7:
