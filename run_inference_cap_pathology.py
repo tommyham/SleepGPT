@@ -334,13 +334,26 @@ def run_inference_on_split(
         # Forward through transformer; cls_feats: [B, num_classes]
         output = model.infer(batch, time_mask=False, stage="test")
         logits = output["cls_feats"]
+        # CrossEntropy path returns {'tf': tensor, 'features': tensor}; Pathology returns tensor directly
+        if isinstance(logits, dict):
+            logits = logits["tf"]
         pred_labels = torch.argmax(logits, dim=-1).cpu()  # [B]
 
-        # True labels: same pathology for all epochs in a window → take first
-        if model.time_size != 1:
-            true_labels = batch["Pathology_label"][:, 0].cpu()  # [B]
+        # True labels depend on the active task
+        task = model.current_tasks[0] if model.current_tasks else "Pathology"
+        if task == "CrossEntropy":
+            # Stage_label: [B, time_size] after _preprocess_batch stacking
+            # Use the last epoch in the window, matching backbone.py:1211 inference convention
+            if model.time_size != 1:
+                true_labels = batch["Stage_label"][:, -1].cpu()  # [B]
+            else:
+                true_labels = batch["Stage_label"].cpu()  # [B]
         else:
-            true_labels = batch["Pathology_label"].cpu()  # [B]
+            # Pathology label is the same for all epochs in a window
+            if model.time_size != 1:
+                true_labels = batch["Pathology_label"][:, 0].cpu()  # [B]
+            else:
+                true_labels = batch["Pathology_label"].cpu()  # [B]
 
         # Subject IDs are stored as a list of scalar tensors by the collate fn
         names = batch["name"]
@@ -348,11 +361,15 @@ def run_inference_on_split(
         for i in range(len(names)):
             raw_name = names[i]
             subject_id = int(raw_name.item()) if isinstance(raw_name, torch.Tensor) else int(raw_name)
+            true_label = int(true_labels[i].item())
+            # Skip MT epochs (stage=7) for CrossEntropy; they are not a valid sleep stage class
+            if task == "CrossEntropy" and true_label == 7:
+                continue
             records.append(
                 {
                     "subject_id": subject_id,
                     "window_idx": subject_window_counter[subject_id],
-                    "true_label": int(true_labels[i].item()),
+                    "true_label": true_label,
                     "pred_label": int(pred_labels[i].item()),
                 }
             )
@@ -551,7 +568,9 @@ def run_fold(
     # ── Save metrics JSON ─────────────────────────────────────────────────────
     json_path = fold_dir / "label_sequence_jmetrics.json"
     model_name = cfg.get("model_arch", "backbone_large_patch200")
-    save_metrics_json(split_records, json_path, model_name, fold_idx, NUM_CLASSES)
+    task = model.current_tasks[0] if model.current_tasks else "Pathology"
+    num_classes = model.num_classes if task == "CrossEntropy" else NUM_CLASSES
+    save_metrics_json(split_records, json_path, model_name, fold_idx, num_classes)
 
 
 # ---------------------------------------------------------------------------
