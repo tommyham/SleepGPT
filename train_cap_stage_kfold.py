@@ -55,6 +55,42 @@ CAP_DATASET_CLASSES = {
     "sdb":   CAPDataset_sdb,
 }
 
+# ---------------------------------------------------------------------------
+# Architecture-specific default parameters
+# ---------------------------------------------------------------------------
+# These values are automatically applied when --model-arch is specified.
+# Any parameter explicitly passed via CLI overrides the arch default.
+#
+# decoder_heads is passed as dim_head to LongNetTransformer, so
+#   num_attention_heads = decoder_features / decoder_heads
+# must be an integer.  Current choices give 32 heads for both archs.
+#
+# longnet_dr and longnet_sl must have equal length (zipped in DilatedAttention).
+# base uses 4 dilation levels to reduce decoder compute; large uses 5.
+#
+# grad_name controls partial backbone unfreezing in freeze_model():
+#   "partial_N" unfreezes blocks N … depth-1.
+#   base (depth=8):  partial_6 → last 2 blocks (25 %)
+#   large (depth=12): partial_10 → last 2 blocks (17 %)
+_ARCH_DEFAULTS: dict = {
+    "backbone_base_patch200": {
+        "decoder_features": 512,
+        "decoder_heads":    16,
+        "decoder_depth":    4,
+        "grad_name":        "partial_6",
+        "longnet_dr":       [1, 2, 4, 8],
+        "longnet_sl":       [32, 64, 128, 512],
+    },
+    "backbone_large_patch200": {
+        "decoder_features": 1024,
+        "decoder_heads":    32,
+        "decoder_depth":    4,
+        "grad_name":        "partial_10",
+        "longnet_dr":       [1, 2, 4, 8, 16],
+        "longnet_sl":       [32, 64, 128, 512, 1024],
+    },
+}
+
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -65,8 +101,22 @@ def build_config(args: argparse.Namespace) -> dict:
 
     Based on run_inference_cap_pathology.py::build_config() with modifications
     for fine-tuning (training) instead of inference.
+
+    Architecture-dependent parameters (decoder size, grad_name, longnet_dr/sl)
+    are resolved from _ARCH_DEFAULTS[args.model_arch] unless explicitly
+    overridden by the corresponding CLI flag.
     """
     use_cuda = torch.cuda.is_available() and not args.cpu
+    ad = _ARCH_DEFAULTS[args.model_arch]
+
+    # Resolve arch-dependent params: explicit CLI value wins over arch default.
+    decoder_features = args.decoder_features if args.decoder_features is not None else ad["decoder_features"]
+    decoder_heads    = args.decoder_heads    if args.decoder_heads    is not None else ad["decoder_heads"]
+    decoder_depth    = args.decoder_depth    if args.decoder_depth    is not None else ad["decoder_depth"]
+    grad_name        = args.grad_name        if args.grad_name        is not None else ad["grad_name"]
+    longnet_dr       = ad["longnet_dr"]
+    longnet_sl       = ad["longnet_sl"]
+
     return {
         # ── Identity / experiment ─────────────────────────────────────────
         "extra_name": "Finetune_cap_stage",
@@ -150,7 +200,7 @@ def build_config(args: argparse.Namespace) -> dict:
         "fast_dev_run":          7,
 
         # ── Architecture ───────────────────────────────────────────────────
-        "model_arch":          "backbone_large_patch200",
+        "model_arch":          args.model_arch,
         "epoch_duration":      30,
         "fs":                  100,
         "mask_ratio":          None,
@@ -180,12 +230,12 @@ def build_config(args: argparse.Namespace) -> dict:
         # ── Decoder / pooler ────────────────────────────────────────────────
         "use_pooling":            "longnet",
         "pool":                   None,
-        "decoder_features":       1024,
-        "decoder_depth":          4,
-        "decoder_heads":          32,
+        "decoder_features":       decoder_features,
+        "decoder_depth":          decoder_depth,
+        "decoder_heads":          decoder_heads,
         "decoder_selected_layers": "2-3",
-        "longnet_dr":             [1, 2, 4, 8, 16],
-        "longnet_sl":             [32, 64, 128, 512, 1024],
+        "longnet_dr":             longnet_dr,
+        "longnet_sl":             longnet_sl,
         "longnet_pool":           False,
 
         # ── Swin / FPN (unused for longnet, required by Model.__init__) ────
@@ -212,7 +262,7 @@ def build_config(args: argparse.Namespace) -> dict:
         "aug_dir":            None,
         "aug_prob":           0.0,
         "kfold_test":         None,
-        "grad_name":          "partial_10",
+        "grad_name":          grad_name,
         "save_top_k":         2,
         "show_transform_param": False,
         "mask_strategies":    None,
@@ -341,6 +391,10 @@ def freeze_model(model: Model, grad_name_prefix: str = "partial_10") -> None:
 
     Mirrors main_kfold.py lines 193-210, but adds 'head' (LongnetClassificationHead)
     which must be trainable for sleep stage classification.
+
+    The upper bound for partial unfreezing uses the actual block count from the
+    loaded transformer so that backbone_base_patch200 (8 blocks) and
+    backbone_large_patch200 (12 blocks) both work correctly.
     """
     for p in model.parameters():
         p.requires_grad = False
@@ -351,11 +405,12 @@ def freeze_model(model: Model, grad_name_prefix: str = "partial_10") -> None:
         "pooler",
         "decoder_transformer_block",
         "stage_pred",
-        "head",   # LongnetClassificationHead (missing from main_kfold.py grad_name list)
+        "head",   # LongnetClassificationHead
     ]
     if grad_name_prefix.startswith("partial"):
         start_block = int(grad_name_prefix.split("_")[-1])
-        for blk_idx in range(start_block, 12):
+        num_blocks = len(model.transformer.blocks)  # actual depth: 8 for base, 12 for large
+        for blk_idx in range(start_block, num_blocks):
             trainable_keys.append(f"transformer.blocks.{blk_idx}")
 
     for name, param in model.named_parameters():
@@ -538,6 +593,47 @@ def main() -> None:
     parser.add_argument("--num-workers",  type=int,   default=0,    help="DataLoader num_workers. Default: %(default)s")
     parser.add_argument("--cpu", action="store_true", help="Force CPU even when GPU is available.")
 
+    # ── Architecture / decoder size (tune for memory) ─────────────────────────
+    parser.add_argument(
+        "--model-arch",
+        default="backbone_large_patch200",
+        choices=["backbone_base_patch200", "backbone_large_patch200"],
+        help=(
+            "Backbone architecture. "
+            "'backbone_base_patch200' (embed_dim=384, depth=8) uses less memory but "
+            "pre-trained weights trained on the large model will not transfer. "
+            "'backbone_large_patch200' (embed_dim=768, depth=12) matches published "
+            "pre-trained checkpoints but requires more GPU memory. "
+            "Default: %(default)s"
+        ),
+    )
+    parser.add_argument(
+        "--decoder-features", type=int, default=None,
+        help=(
+            "LongNet decoder hidden dim. "
+            "Default: 512 for backbone_base_patch200, 1024 for backbone_large_patch200."
+        ),
+    )
+    parser.add_argument(
+        "--decoder-depth", type=int, default=None,
+        help="LongNet decoder transformer depth. Default: 4 for both archs.",
+    )
+    parser.add_argument(
+        "--decoder-heads", type=int, default=None,
+        help=(
+            "LongNet decoder attention dim_head "
+            "(num_heads = decoder_features / decoder_heads must be integer). "
+            "Default: 16 for backbone_base_patch200, 32 for backbone_large_patch200."
+        ),
+    )
+    parser.add_argument(
+        "--grad-name", default=None,
+        help=(
+            "Partial backbone unfreeze spec, e.g. 'partial_6' unfreezes blocks 6+ . "
+            "Default: 'partial_6' for backbone_base_patch200, 'partial_10' for backbone_large_patch200."
+        ),
+    )
+
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -545,14 +641,18 @@ def main() -> None:
     config = build_config(args)
 
     print("SleepGPT Sleep Stage Fine-Tuning (CAP dataset)")
-    print(f"  Device     : {config['device']}")
-    print(f"  Folds      : {args.kfold}")
-    print(f"  CAP root   : {args.cap_root}")
-    print(f"  Checkpoint : {args.pretrain_ckpt}")
-    print(f"  Output dir : {output_dir}")
-    print(f"  Batch size : {args.batch_size}")
-    print(f"  Max epochs : {args.max_epoch}")
-    print(f"  LR         : {args.lr}")
+    print(f"  Device          : {config['device']}")
+    print(f"  Model arch      : {config['model_arch']}")
+    print(f"  Decoder         : features={config['decoder_features']}  depth={config['decoder_depth']}  dim_head={config['decoder_heads']}")
+    print(f"  LongNet dr/sl   : {config['longnet_dr']} / {config['longnet_sl']}")
+    print(f"  Grad name       : {config['grad_name']}")
+    print(f"  Folds           : {args.kfold}")
+    print(f"  CAP root        : {args.cap_root}")
+    print(f"  Checkpoint      : {args.pretrain_ckpt}")
+    print(f"  Output dir      : {output_dir}")
+    print(f"  Batch size      : {args.batch_size}")
+    print(f"  Max epochs      : {args.max_epoch}")
+    print(f"  LR              : {args.lr}")
 
     for fold in range(args.kfold):
         print(f"\n{'='*60}")
