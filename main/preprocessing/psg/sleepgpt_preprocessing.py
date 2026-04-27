@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import math
+import os
 import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -161,12 +163,34 @@ def parse_label_mapping(raw: str | None) -> dict[int, int] | None:
     return mapping
 
 
+def get_subject_list(edf_root_folder: str) -> list[str]:
+    """被験者フォルダの一覧を取得"""
+    subject_folders = []
+    for item in os.listdir(edf_root_folder):
+        item_path = os.path.join(edf_root_folder, item)
+        if os.path.isdir(item_path):
+            subject_folders.append(item_path)
+
+    # logger.info(f"被験者数: {len(subject_folders)}")
+    return sorted(subject_folders)
+
+def get_edf_files(edf_root_folder: str, subject_folder: str) -> list[str]:
+    """被験者フォルダ内のEDFファイル一覧を取得"""
+    edf_files = glob.glob(os.path.join(subject_folder, "*.edf"))
+    # logger.info(
+    #     f"被験者 {os.path.basename(subject_folder)}: {len(edf_files)}個のEDFファイル"
+    # )
+    return sorted(edf_files)
+
+
 def _iter_filtered_subject_dirs(input_root: str | Path) -> Iterable[Path]:
     root = Path(input_root)
-    for candidate in sorted(root.iterdir()):
+    subject_folders = get_subject_list(root)
+    for subject_folder in subject_folders:
+        candidate = Path(subject_folder)
         if not candidate.is_dir():
             continue
-        if (candidate / "Signals").is_dir() and (candidate / "label.npy").exists():
+        if (candidate / "Signals").is_dir() and (candidate / "Signals" / "label.npy").exists():
             yield candidate
 
 
@@ -306,11 +330,11 @@ def convert_filtered_subject_to_h5(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     raw_signals = _load_signal_arrays(subject_dir)
-    labels = np.load(subject_dir / "label.npy")
+    labels = np.load(subject_dir / "Signals" / "label.npy")
 
     resampled_signals = {
         name: _resample_signal(signal, config.source_frequency, config.target_frequency)
-        for name, signal in raw_signals.items()
+        for name, signal in raw_signals.items() if name != "label"
     }
 
     canonical_signals, good_channels, source_names = _build_canonical_signals(
