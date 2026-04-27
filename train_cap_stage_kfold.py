@@ -359,6 +359,24 @@ def _move_batch_to_device(batch: dict, device: str) -> dict:
     return result
 
 
+_STAGE_IGNORE_INDEX = -100
+_NUM_STAGE_CLASSES  = 5  # W, N1, N2, N3, REM
+
+
+def _sanitize_stage_labels(labels: torch.Tensor) -> torch.Tensor:
+    """Remap out-of-range stage labels (e.g. MT=7) to the cross-entropy ignore_index.
+
+    The CAP dataset stores Movement Time epochs as label 7.  PyTorch's
+    cross_entropy CUDA kernel raises a device-side assert when any target value
+    is outside [0, num_classes) and is not the ignore_index.  This function
+    remaps such values to _STAGE_IGNORE_INDEX (-100) so they are skipped during
+    loss computation, matching the semantics of already-masked (-100) entries.
+    """
+    valid   = (labels >= 0) & (labels < _NUM_STAGE_CLASSES)
+    ignored = labels == _STAGE_IGNORE_INDEX
+    return labels.masked_fill(~(valid | ignored), _STAGE_IGNORE_INDEX)
+
+
 def preprocess_batch(batch: dict, model: Model) -> dict:
     """Replicate Model.forward() preprocessing so infer() can be called directly.
 
@@ -367,7 +385,9 @@ def preprocess_batch(batch: dict, model: Model) -> dict:
     """
     if "Stage_label" in batch:
         # list of B tensors (T, 1) → (B, T, 1) → (B, T)
-        batch["Stage_label"] = torch.stack(batch["Stage_label"], dim=0).squeeze(-1)
+        batch["Stage_label"] = _sanitize_stage_labels(
+            torch.stack(batch["Stage_label"], dim=0).squeeze(-1)
+        )
     if "Pathology_label" in batch:
         batch["Pathology_label"] = (
             torch.stack(batch["Pathology_label"], dim=0).squeeze(1).squeeze(-1)
