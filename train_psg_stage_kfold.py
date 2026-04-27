@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import lightning.pytorch as pl
 from sklearn.metrics import accuracy_score, cohen_kappa_score, f1_score
 from timm.scheduler.cosine_lr import CosineLRScheduler
 from torch.utils.data import DataLoader
@@ -412,6 +414,39 @@ def train_fold(
     best_val_acc = -1.0
     best_metrics: dict[str, float | int] | None = None
     step = 0
+    # logger_path = os.path.join(config["log_dir"], "finetune")
+    # os.makedirs(logger_path, exist_ok=True)
+    # logger = pl.loggers.TensorBoardLogger(
+    #     logger_path,
+    #     name=f'fold_{fold}',
+    # )
+    
+    # trainer = pl.Trainer(
+    #     profiler="simple",
+    #     devices=config["num_gpus"],
+    #     precision=config["precision"],
+    #     accelerator=config["device"],
+    #     strategy="auto",
+    #     deterministic=True,
+    #     max_epochs=config["max_epoch"],
+    #     max_steps=max_steps,
+    #     # callbacks=callbacks,
+    #     logger=logger,
+    #     accumulate_grad_batches= config['accum_iter'],
+    #     log_every_n_steps=1,
+    #     val_check_interval=config["val_check_interval"],
+    #     limit_val_batches=config['limit_val_batches'],
+    #     gradient_clip_val=config['gradient_clip_val']
+    # )
+    
+    # flag = True
+    # if config['resume_during_training'] is not None and fold == int(config['resume_during_training']):
+    #     if config["resume_ckpt_path"] != "":
+    #         flag = False
+    #         trainer.fit(model, datamodule=dm,
+    #                     ckpt_path=config['resume_ckpt_path'])
+    # if flag is True:
+    #     trainer.fit(model, datamodule=dm,)
 
     for epoch in range(config["max_epoch"]):
         model.train()
