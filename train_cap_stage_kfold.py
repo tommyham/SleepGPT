@@ -223,8 +223,8 @@ def build_config(args: argparse.Namespace) -> dict:
 
         # ── Time-series / sliding window ────────────────────────────────────
         "all_time":      True,
-        "time_size":     100,
-        "split_len":     100,
+        "time_size":     30,
+        "split_len":     30,
         "use_all_label": "all",
 
         # ── Decoder / pooler ────────────────────────────────────────────────
