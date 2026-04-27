@@ -82,12 +82,12 @@ _ARCH_DEFAULTS: dict = {
         "longnet_sl":       [32, 64, 128, 512],
     },
     "backbone_large_patch200": {
-        "decoder_features": 1024,
+        "decoder_features": 256,
         "decoder_heads":    32,
         "decoder_depth":    4,
         "grad_name":        "partial_10",
-        "longnet_dr":       [1, 2, 4, 8, 16],
-        "longnet_sl":       [32, 64, 128, 512, 1024],
+        "longnet_dr":       [1, 2, 4],
+        "longnet_sl":       [32, 64, 128],
     },
 }
 
