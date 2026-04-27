@@ -158,6 +158,10 @@ All configurations are defined in [`config.py`](./config.py), so you don’t nee
 
 See [`masked_reconstruction_demo.md`](docs/masked_reconstruction_demo.md) for a full explanation and how to run the visualization script.
 
+## 🧾 Custom PSG Workflow
+
+For adapting a filtered custom PSG dataset into SleepGPT-native HDF5, building rotating k-fold splits, fine-tuning the sleep staging head, and re-running evaluation from saved checkpoints, see [`custom_psg_sleepgpt_pipeline.md`](docs/custom_psg_sleepgpt_pipeline.md).
+
 
 ## 📝 Citation
 

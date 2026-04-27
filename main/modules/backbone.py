@@ -96,12 +96,7 @@ class Model(LightningModule):
         self.build_relative_position_embed(config)
         self.poly = config['poly']
         self.num_encoder_layers = config['num_encoder_layers']
-        if self.use_pooling:
-            dpr = [x.item() for x in
-                   torch.linspace(0.00, config["drop_path_rate"], 12 + self.num_encoder_layers)]
-        else:
-            dpr = config["drop_path_rate"]
-        rank_zero_info(f"dpr_backbone: {dpr}")
+        # dpr is computed after self.num_layers is known (see below)
         self.use_triton = config['use_triton']
         if config['spo2_ods_settings']['inj'] is True:
             self.spo2_ods_settings = config['spo2_ods_settings']
@@ -152,6 +147,13 @@ class Model(LightningModule):
 
         self.tfffn_start_layer_index = self.transformer.tfffn_start_layer_index  # 12
         self.num_layers = len(self.transformer.blocks)
+        if self.use_pooling:
+            dpr = [x.item() for x in
+                   torch.linspace(0.00, config["drop_path_rate"],
+                                  self.num_layers + self.num_encoder_layers)]
+        else:
+            dpr = config["drop_path_rate"]
+        rank_zero_info(f"dpr_backbone: {dpr}")
         self.window_size = config['Swin_window_size']
         self.all_time = config['all_time']
         self.decoder_features = config['decoder_features']
@@ -208,7 +210,7 @@ class Model(LightningModule):
                     self.pooler = heads.Attn(self.num_features * 2, self.num_features * 2, reshape=False,
                                              channels=self.transformer.num_patches, double=False,
                                              channel_wise=False, return_alpha=self.return_alpha)
-                    self.decoder_transformer_block = LongNetTransformer(dim = self.decoder_features, depth=self.decoder_depth, dim_head=self.decoder_heads,
+                    self.decoder_transformer_block = LongNetTransformer(dim=self.decoder_features, in_chans=self.num_features * 2, depth=self.decoder_depth, dim_head=self.decoder_heads,
                                                                   num_patches=self.time_size * self.transformer.num_patches, dilated_ratios=config['longnet_dr'], segment_lengths=config['longnet_sl'],
                                                                 global_pool=self.longnet_pool
                                                                   )
@@ -258,7 +260,7 @@ class Model(LightningModule):
                                             num_patches=self.time_size, multi_y=self.multi_y,
                                             use_relative_pos_emb=self.use_relative_pos_emb,
                                             use_multiway=config['use_multiway'],
-                                            drop_path_rate=dpr[12:])
+                                            drop_path_rate=dpr[self.num_layers:])
                         self.decoder_transformer_block.apply(init_weights)
                     elif self.use_pooling == 'swin':
                         self.pooler = heads.Attn(self.num_features * 2, self.decoder_features, reshape=False,
@@ -282,6 +284,7 @@ class Model(LightningModule):
                                                  channels=self.transformer.num_patches, double=False,
                                                  channel_wise=False, return_alpha=self.return_alpha)
                         self.decoder_transformer_block = LongNetTransformer(dim=self.decoder_features,
+                                                                            in_chans=self.num_features * 2,
                                                                             depth=self.decoder_depth,
                                                                             dim_head=self.decoder_heads,
                                                                             num_patches=self.time_size * self.transformer.num_patches,
