@@ -13,7 +13,7 @@ Output structure::
       fold_0/
         eval/
           test/
-            subject-001.csv   # columns: subject_id, true_label_id, pred_label_id, is_correct
+            subject-001.csv   # columns: subject_id, is_transition, true_label_id, pred_label_id, is_correct
             subject-002.csv
           val/
             ...
@@ -33,7 +33,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.metrics import cohen_kappa_score
 from torch.utils.data import DataLoader
 
 from main.datasets.PSG_dataset import PSGDataset
@@ -204,15 +203,19 @@ def save_subject_csvs(
     split: str,
 ) -> list[str]:
     """Save per-subject prediction CSVs under output_dir/fold_{fold}/eval/{split}/."""
-    split_dir = output_dir / f"fold_{fold}" / split
+    split_dir = output_dir / f"fold_{fold}" / "eval" / split
     split_dir.mkdir(parents=True, exist_ok=True)
     output_paths: list[str] = []
 
     for subject_id, (true_labels, pred_labels) in subject_data.items():
+        is_transition = [0] + [
+            int(true_labels[i] != true_labels[i - 1]) for i in range(1, len(true_labels))
+        ]
         is_correct = [int(t == p) for t, p in zip(true_labels, pred_labels)]
         df = pd.DataFrame(
             {
                 "subject_id": [subject_id] * len(true_labels),
+                "is_transition": is_transition,
                 "true_label_id": true_labels,
                 "pred_label_id": pred_labels,
                 "is_correct": is_correct,
@@ -226,7 +229,7 @@ def save_subject_csvs(
 
 
 # ---------------------------------------------------------------------------
-# Metrics (ported from SleepStage label_sequence_metrics.py)
+# Metrics
 # ---------------------------------------------------------------------------
 
 def _compute_confusion_matrix(
@@ -247,7 +250,7 @@ def compute_metrics_from_labels(
     y_true: np.ndarray, y_pred: np.ndarray, num_classes: int
 ) -> dict:
     """Compute accuracy, per-class precision/recall/F1, macro averages,
-    Cohen's kappa, and confusion matrix from label arrays."""
+    and confusion matrix from label arrays."""
     conf_matrix = _compute_confusion_matrix(y_true, y_pred, num_classes)
     total = float(np.sum(conf_matrix))
     accuracy = float(np.trace(conf_matrix) / total) if total > 0 else 0.0
@@ -271,17 +274,9 @@ def compute_metrics_from_labels(
         where=denom > 0,
     )
 
-    kappa = 0.0
-    if total > 0 and len(np.unique(y_true)) > 1:
-        try:
-            kappa = float(cohen_kappa_score(y_true, y_pred))
-        except Exception:
-            kappa = 0.0
-
     return {
         "num_samples": int(total),
         "accuracy": accuracy,
-        "kappa": kappa,
         "precision": float(np.mean(precision_per_class)),
         "recall": float(np.mean(recall_per_class)),
         "f1_score": float(np.mean(f1_per_class)),
@@ -290,6 +285,83 @@ def compute_metrics_from_labels(
         "f1_score_per_class": f1_per_class.tolist(),
         "confusion_matrix": conf_matrix.tolist(),
     }
+
+
+def _to_binary_numpy(series: pd.Series, default_value: int = 0) -> np.ndarray:
+    values = pd.to_numeric(series, errors="coerce").fillna(default_value)
+    return np.clip(values.to_numpy(dtype=np.int64), 0, 1)
+
+
+def _extract_transition_correct_arrays(
+    df: pd.DataFrame,
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    if "is_transition" in df.columns:
+        is_transition = _to_binary_numpy(df["is_transition"], default_value=0)
+    else:
+        is_transition = np.zeros_like(y_true, dtype=np.int64)
+
+    if "is_correct" in df.columns:
+        is_correct = _to_binary_numpy(df["is_correct"], default_value=0)
+    else:
+        is_correct = (y_true == y_pred).astype(np.int64)
+
+    min_size = min(len(y_true), len(y_pred), len(is_transition), len(is_correct))
+    return (
+        y_true[:min_size],
+        y_pred[:min_size],
+        is_transition[:min_size],
+        is_correct[:min_size],
+    )
+
+
+def _compute_transition_correct_metrics(
+    is_transition: np.ndarray,
+    is_correct: np.ndarray,
+) -> dict:
+    t0_c0 = int(np.sum((is_transition == 0) & (is_correct == 0)))
+    t0_c1 = int(np.sum((is_transition == 0) & (is_correct == 1)))
+    t1_c0 = int(np.sum((is_transition == 1) & (is_correct == 0)))
+    t1_c1 = int(np.sum((is_transition == 1) & (is_correct == 1)))
+
+    total_t0 = t0_c0 + t0_c1
+    total_t1 = t1_c0 + t1_c1
+
+    return {
+        "transition_correct_matrix": [
+            [t0_c0, t0_c1],
+            [t1_c0, t1_c1],
+        ],
+        "transition_correct_counts": {
+            "is_transition_0": {
+                "is_correct_0": t0_c0,
+                "is_correct_1": t0_c1,
+                "total": total_t0,
+            },
+            "is_transition_1": {
+                "is_correct_0": t1_c0,
+                "is_correct_1": t1_c1,
+                "total": total_t1,
+            },
+        },
+        "transition_accuracy": {
+            "is_transition_0": float(t0_c1 / total_t0) if total_t0 > 0 else 0.0,
+            "is_transition_1": float(t1_c1 / total_t1) if total_t1 > 0 else 0.0,
+        },
+    }
+
+
+def _compose_metrics(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    is_transition: np.ndarray,
+    is_correct: np.ndarray,
+    num_classes: int,
+) -> dict:
+    base_metrics = compute_metrics_from_labels(y_true, y_pred, num_classes)
+    transition_metrics = _compute_transition_correct_metrics(is_transition, is_correct)
+    return {**base_metrics, **transition_metrics}
 
 
 def collect_fold_metrics_from_eval_dir(
@@ -303,6 +375,8 @@ def collect_fold_metrics_from_eval_dir(
         subject_metrics: dict = {}
         y_true_all: list[np.ndarray] = []
         y_pred_all: list[np.ndarray] = []
+        is_transition_all: list[np.ndarray] = []
+        is_correct_all: list[np.ndarray] = []
 
         if split_dir.exists():
             for csv_path in sorted(split_dir.glob("*.csv")):
@@ -312,21 +386,40 @@ def collect_fold_metrics_from_eval_dir(
                 subject_id = csv_path.stem
                 y_true = df["true_label_id"].to_numpy(dtype=np.int64)
                 y_pred = df["pred_label_id"].to_numpy(dtype=np.int64)
-                subject_metrics[subject_id] = compute_metrics_from_labels(
-                    y_true, y_pred, num_classes
+                y_true, y_pred, is_transition, is_correct = _extract_transition_correct_arrays(
+                    df=df, y_true=y_true, y_pred=y_pred
+                )
+                subject_metrics[subject_id] = _compose_metrics(
+                    y_true=y_true,
+                    y_pred=y_pred,
+                    is_transition=is_transition,
+                    is_correct=is_correct,
+                    num_classes=num_classes,
                 )
                 y_true_all.append(y_true)
                 y_pred_all.append(y_pred)
+                is_transition_all.append(is_transition)
+                is_correct_all.append(is_correct)
 
         if y_true_all:
             y_true_np = np.concatenate(y_true_all)
             y_pred_np = np.concatenate(y_pred_all)
+            is_transition_np = np.concatenate(is_transition_all)
+            is_correct_np = np.concatenate(is_correct_all)
         else:
             y_true_np = np.asarray([], dtype=np.int64)
             y_pred_np = np.asarray([], dtype=np.int64)
+            is_transition_np = np.asarray([], dtype=np.int64)
+            is_correct_np = np.asarray([], dtype=np.int64)
 
         metrics_by_split[split] = {
-            "overall": compute_metrics_from_labels(y_true_np, y_pred_np, num_classes),
+            "overall": _compose_metrics(
+                y_true=y_true_np,
+                y_pred=y_pred_np,
+                is_transition=is_transition_np,
+                is_correct=is_correct_np,
+                num_classes=num_classes,
+            ),
             "subjects": subject_metrics,
         }
 
@@ -334,11 +427,12 @@ def collect_fold_metrics_from_eval_dir(
 
 
 def write_fold_metrics_json(
-    fold_eval_dir: Path, fold: int, num_classes: int, splits: list[str]
+    fold_eval_dir: Path, fold: int, num_classes: int, splits: list[str], model_name: str = ""
 ) -> dict:
     """Write label_sequence_metrics.json and return the payload dict."""
     payload = {
         "fold": fold,
+        "model_name": model_name,
         "num_classes": num_classes,
         **collect_fold_metrics_from_eval_dir(fold_eval_dir, splits, num_classes),
     }
@@ -368,15 +462,12 @@ def summarize_cross_fold(fold_results: list[dict], splits: list[str]) -> dict:
 
         acc = np.array([m["accuracy"] for m in split_metrics])
         f1 = np.array([m["f1_score"] for m in split_metrics])
-        kappa = np.array([m["kappa"] for m in split_metrics])
 
         summary["splits"][split] = {
             "mean_accuracy": float(acc.mean()),
             "std_accuracy": float(acc.std(ddof=0)),
             "mean_f1_score": float(f1.mean()),
             "std_f1_score": float(f1.std(ddof=0)),
-            "mean_kappa": float(kappa.mean()),
-            "std_kappa": float(kappa.std(ddof=0)),
             "per_fold": [
                 {"fold": res.get("fold", i), **res["splits"][split]["overall"]}
                 for i, res in enumerate(fold_results)
@@ -501,7 +592,8 @@ def main() -> None:
 
         fold_eval_dir = output_dir / f"fold_{fold}" / "eval"
         fold_metrics = write_fold_metrics_json(
-            fold_eval_dir, fold, args.num_classes, args.splits
+            fold_eval_dir, fold, args.num_classes, args.splits,
+            model_name=config["model_arch"],
         )
         fold_results.append(fold_metrics)
 
@@ -510,7 +602,7 @@ def main() -> None:
                 ov = fold_metrics["splits"][split]["overall"]
                 print(
                     f"  [{split}] accuracy={ov['accuracy']:.4f}  "
-                    f"f1={ov['f1_score']:.4f}  kappa={ov['kappa']:.4f}  "
+                    f"f1={ov['f1_score']:.4f}  "
                     f"n={ov['num_samples']}"
                 )
 
@@ -528,8 +620,7 @@ def main() -> None:
                 print(
                     f"  [{split}] "
                     f"mean_accuracy={s['mean_accuracy']:.4f}±{s['std_accuracy']:.4f}  "
-                    f"mean_f1={s['mean_f1_score']:.4f}±{s['std_f1_score']:.4f}  "
-                    f"mean_kappa={s['mean_kappa']:.4f}±{s['std_kappa']:.4f}"
+                    f"mean_f1={s['mean_f1_score']:.4f}±{s['std_f1_score']:.4f}"
                 )
         print(f"  Summary saved to: {summary_path}")
 
