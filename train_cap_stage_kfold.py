@@ -23,13 +23,15 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from sklearn.metrics import accuracy_score, f1_score
+from sklearn.metrics import accuracy_score, cohen_kappa_score, f1_score
 from timm.scheduler.cosine_lr import CosineLRScheduler
 from torch.utils.data import ConcatDataset, DataLoader
 
@@ -294,14 +296,24 @@ def build_config(args: argparse.Namespace) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Model builder
+# ---------------------------------------------------------------------------
+
+def build_model(config: dict, fold: int) -> Model:
+    model = Model(config, fold_now=fold, num_classes=config["num_classes"])
+    model.current_tasks = ["CrossEntropy"]
+    return model.to(config["device"])
+
+
+# ---------------------------------------------------------------------------
 # Dataset / DataLoader
 # ---------------------------------------------------------------------------
 
 def make_loaders(cap_root: str, kfold: int, config: dict):
-    """Create train and validation DataLoaders from all CAP pathology groups."""
+    """Create train, validation, and test DataLoaders from all CAP pathology groups."""
     dataset_kwargs = dict(
         transform_keys=config["transform_keys"],
-        column_names=["signal", "stage", "good_channels", "pathology"],
+        column_names=["signal", "stage", "good_channels"],
         stage=True,
         pathology=False,
         spindle=False,
@@ -309,20 +321,20 @@ def make_loaders(cap_root: str, kfold: int, config: dict):
         mask_ratio=config["mask_ratio"],
         all_time=config["all_time"],
         time_size=config["time_size"],
-        pool_all=True,        # Non-overlapping windows; set directly
+        pool_all=True,
         split_len=config["split_len"],
         patch_size=config["patch_size"],
         settings=None,
         kfold=kfold,
     )
 
-    train_ds_list, val_ds_list = [], []
+    train_ds_list, val_ds_list, test_ds_list = [], [], []
     for name, cls in CAP_DATASET_CLASSES.items():
         data_dir = os.path.join(cap_root, name)
         train_ds_list.append(cls(split="train", data_dir=data_dir, **dataset_kwargs))
-        val_ds_list.append(  cls(split="val",   data_dir=data_dir, **dataset_kwargs))
+        val_ds_list.append(cls(split="val", data_dir=data_dir, **dataset_kwargs))
+        test_ds_list.append(cls(split="test", data_dir=data_dir, **dataset_kwargs))
 
-    # All datasets share an identical collate implementation
     collate_fn = train_ds_list[0].collate
 
     train_dl = DataLoader(
@@ -331,7 +343,7 @@ def make_loaders(cap_root: str, kfold: int, config: dict):
         shuffle=True,
         num_workers=config["num_workers"],
         collate_fn=collate_fn,
-        drop_last=True,
+        drop_last=False,
     )
     val_dl = DataLoader(
         ConcatDataset(val_ds_list),
@@ -340,7 +352,14 @@ def make_loaders(cap_root: str, kfold: int, config: dict):
         num_workers=config["num_workers"],
         collate_fn=collate_fn,
     )
-    return train_dl, val_dl
+    test_dl = DataLoader(
+        ConcatDataset(test_ds_list),
+        batch_size=config["batch_size"],
+        shuffle=False,
+        num_workers=config["num_workers"],
+        collate_fn=collate_fn,
+    )
+    return train_dl, val_dl, test_dl
 
 
 # ---------------------------------------------------------------------------
@@ -360,20 +379,9 @@ def _move_batch_to_device(batch: dict, device: str) -> dict:
 
 
 def preprocess_batch(batch: dict, model: Model) -> dict:
-    """Replicate Model.forward() preprocessing so infer() can be called directly.
-
-    Mirrors run_inference_cap_pathology.py::_preprocess_batch().
-    Stack label lists → tensors, compute FFT, build attention mask.
-    """
     if "Stage_label" in batch:
-        # list of B tensors (T, 1) → (B, T, 1) → (B, T)
         batch["Stage_label"] = torch.stack(batch["Stage_label"], dim=0).squeeze(-1)
-    if "Pathology_label" in batch:
-        batch["Pathology_label"] = (
-            torch.stack(batch["Pathology_label"], dim=0).squeeze(1).squeeze(-1)
-        )
 
-    # Compute FFT branch and build full attention mask
     epochs_fft, attn_mask_fft = model.transformer.get_fft(
         batch["epochs"][0], batch["mask"][0], aug=False
     )
@@ -419,52 +427,57 @@ def freeze_model(model: Model, grad_name_prefix: str = "partial_10") -> None:
 
 
 # ---------------------------------------------------------------------------
-# Validation
+# Evaluation
 # ---------------------------------------------------------------------------
 
 @torch.no_grad()
-def run_validation(model: Model, val_dl: DataLoader, device: str) -> tuple:
-    """Run validation and return (accuracy, macro_f1)."""
+def evaluate_model(
+    model: Model, data_loader: DataLoader, device: str
+) -> dict[str, float | int]:
     model.eval()
     model.current_tasks = ["CrossEntropy"]
     all_preds, all_labels = [], []
 
-    for batch in val_dl:
+    for batch in data_loader:
         batch = _move_batch_to_device(batch, device)
         batch = preprocess_batch(batch, model)
 
-        target = batch["Stage_label"].reshape(-1).long()   # [B*T]
-        out    = model.infer(batch, time_mask=False, stage="val")
-        logits = out["cls_feats"]["tf"]                    # [B*T, num_classes]
-        preds  = logits.argmax(dim=-1)                     # [B*T]
+        target = batch["Stage_label"].reshape(-1).long()
+        out = model.infer(batch, time_mask=False, stage="eval")
+        logits = out["cls_feats"]["tf"]
+        preds = logits.argmax(dim=-1)
 
         valid = target != -100
         all_preds.extend(preds[valid].cpu().numpy())
         all_labels.extend(target[valid].cpu().numpy())
 
-    acc      = accuracy_score(all_labels, all_preds)
+    accuracy = accuracy_score(all_labels, all_preds)
     macro_f1 = f1_score(all_labels, all_preds, average="macro", zero_division=0)
-    return acc, macro_f1
+    kappa = cohen_kappa_score(all_labels, all_preds)
+    return {
+        "accuracy": float(accuracy),
+        "macro_f1": float(macro_f1),
+        "kappa": float(kappa),
+        "num_samples": int(len(all_labels)),
+    }
 
 
 # ---------------------------------------------------------------------------
 # Training loop (one fold)
 # ---------------------------------------------------------------------------
 
-def train_fold(config: dict, cap_root: str, fold: int, output_dir: Path) -> None:
-    device  = config["device"]
+def train_fold(
+    config: dict,
+    cap_root: str,
+    fold: int,
+    output_dir: Path,
+) -> dict[str, float | int]:
+    device = config["device"]
     use_amp = device == "cuda"
 
-    # ── Model ──────────────────────────────────────────────────────────────
-    # load_pretrained_weight() is called inside __init__ using config["load_path"]
-    model = Model(config, fold_now=fold, num_classes=config["num_classes"])
-    model.current_tasks = ["CrossEntropy"]
-    model = model.to(device)
-
-    # ── Freeze / unfreeze ──────────────────────────────────────────────────
+    model = build_model(config, fold)
     freeze_model(model, grad_name_prefix=config["grad_name"])
 
-    # ── Optimizer with layer-wise LR decay ─────────────────────────────────
     if config["get_param_method"] == "layer_decay":
         param_groups = param_groups_lrd(
             model,
@@ -478,10 +491,12 @@ def train_fold(config: dict, cap_root: str, fold: int, output_dir: Path) -> None
         )
     optimizer = torch.optim.AdamW(param_groups, lr=config["lr"], eps=1e-8, betas=(0.9, 0.999))
 
-    # ── DataLoaders ─────────────────────────────────────────────────────────
-    train_dl, val_dl = make_loaders(cap_root, fold, config)
+    train_dl, val_dl, test_dl = make_loaders(cap_root, fold, config)
+    if len(train_dl) == 0:
+        raise ValueError(
+            "Training DataLoader is empty. Increase subject count or reduce --time-size / --batch-size."
+        )
 
-    # ── Cosine LR Scheduler (step-based, with linear warmup) ────────────────
     max_steps = len(train_dl) * config["max_epoch"]
     warmup_cfg = config["warmup_steps"]
     warmup_steps = int(max_steps * warmup_cfg) if isinstance(warmup_cfg, float) else int(warmup_cfg)
@@ -499,65 +514,113 @@ def train_fold(config: dict, cap_root: str, fold: int, output_dir: Path) -> None
 
     ckpt_dir = output_dir / f"fold_{fold}"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    best_val_acc = 0.0
+    best_val_acc = -1.0
+    best_metrics: dict[str, float | int] | None = None
     step = 0
 
     for epoch in range(config["max_epoch"]):
-        # ── Training epoch ──────────────────────────────────────────────────
         model.train()
         model.current_tasks = ["CrossEntropy"]
         epoch_loss = 0.0
-        n_batches  = 0
+        n_batches = 0
 
         for batch in train_dl:
             batch = _move_batch_to_device(batch, device)
             batch = preprocess_batch(batch, model)
-
-            # Labels: list of B (T, 1) → (B, T) → (B*T,)
             target = batch["Stage_label"].reshape(-1).long()
 
             optimizer.zero_grad()
             with torch.cuda.amp.autocast(enabled=use_amp):
-                out    = model.infer(batch, time_mask=False, stage="train")
-                logits = out["cls_feats"]["tf"]          # [B*T, num_classes]
-                loss   = F.cross_entropy(logits, target, ignore_index=-100)
+                out = model.infer(batch, time_mask=False, stage="train")
+                logits = out["cls_feats"]["tf"]
+                loss = F.cross_entropy(logits, target, ignore_index=-100)
 
             scaler.scale(loss).backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             scaler.step(optimizer)
             scaler.update()
             scheduler.step_update(step)
-            step      += 1
+            step += 1
             epoch_loss += loss.item()
-            n_batches  += 1
+            n_batches += 1
 
         avg_loss = epoch_loss / max(n_batches, 1)
-
-        # ── Validation epoch ────────────────────────────────────────────────
-        val_acc, val_macro_f1 = run_validation(model, val_dl, device)
+        val_metrics = evaluate_model(model, val_dl, device)
         print(
-            f"Fold {fold}  Epoch {epoch:02d}  "
-            f"loss={avg_loss:.4f}  val_acc={val_acc:.4f}  macro_f1={val_macro_f1:.4f}"
+            f"Fold {fold}  Epoch {epoch:02d}  loss={avg_loss:.4f}  "
+            f"val_acc={val_metrics['accuracy']:.4f}  val_macro_f1={val_metrics['macro_f1']:.4f}"
         )
 
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
+        if float(val_metrics["accuracy"]) > best_val_acc:
+            best_val_acc = float(val_metrics["accuracy"])
             torch.save(
                 {
-                    "state_dict":   model.state_dict(),
-                    "epoch":        epoch,
-                    "fold":         fold,
-                    "val_acc":      val_acc,
-                    "val_macro_f1": val_macro_f1,
+                    "state_dict": model.state_dict(),
+                    "epoch": epoch,
+                    "fold": fold,
+                    "val_metrics": val_metrics,
                 },
                 ckpt_dir / "best.ckpt",
             )
+            best_metrics = val_metrics
+
         torch.save(
             {"state_dict": model.state_dict(), "epoch": epoch, "fold": fold},
             ckpt_dir / "last.ckpt",
         )
 
-    print(f"Fold {fold} complete. Best val_acc={best_val_acc:.4f}")
+    checkpoint = torch.load(ckpt_dir / "best.ckpt", map_location=device)
+    model.load_state_dict(checkpoint["state_dict"], strict=False)
+    test_metrics = evaluate_model(model, test_dl, device)
+
+    fold_metrics = {
+        "fold": fold,
+        "best_val_accuracy": float(
+            best_metrics["accuracy"] if best_metrics is not None else 0.0
+        ),
+        "best_val_macro_f1": float(
+            best_metrics["macro_f1"] if best_metrics is not None else 0.0
+        ),
+        "test_accuracy": float(test_metrics["accuracy"]),
+        "test_macro_f1": float(test_metrics["macro_f1"]),
+        "test_kappa": float(test_metrics["kappa"]),
+        "test_num_samples": int(test_metrics["num_samples"]),
+    }
+    (ckpt_dir / "metrics.json").write_text(
+        json.dumps(fold_metrics, indent=2), encoding="utf-8"
+    )
+    print(
+        f"Fold {fold} complete. test_acc={fold_metrics['test_accuracy']:.4f}  "
+        f"test_macro_f1={fold_metrics['test_macro_f1']:.4f}"
+    )
+    return fold_metrics
+
+
+# ---------------------------------------------------------------------------
+# Cross-fold summary
+# ---------------------------------------------------------------------------
+
+def summarize_metrics(
+    fold_metrics: list[dict[str, float | int]],
+) -> dict[str, float | list[dict[str, float | int]]]:
+    test_acc = np.array(
+        [m["test_accuracy"] for m in fold_metrics], dtype=np.float64
+    )
+    test_macro_f1 = np.array(
+        [m["test_macro_f1"] for m in fold_metrics], dtype=np.float64
+    )
+    test_kappa = np.array(
+        [m["test_kappa"] for m in fold_metrics], dtype=np.float64
+    )
+    return {
+        "folds": fold_metrics,
+        "mean_test_accuracy": float(test_acc.mean()),
+        "std_test_accuracy": float(test_acc.std(ddof=0)),
+        "mean_test_macro_f1": float(test_macro_f1.mean()),
+        "std_test_macro_f1": float(test_macro_f1.std(ddof=0)),
+        "mean_test_kappa": float(test_kappa.mean()),
+        "std_test_kappa": float(test_kappa.std(ddof=0)),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -654,13 +717,23 @@ def main() -> None:
     print(f"  Max epochs      : {args.max_epoch}")
     print(f"  LR              : {args.lr}")
 
+    fold_metrics: list[dict[str, float | int]] = []
     for fold in range(args.kfold):
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f" Fold {fold}")
-        print(f"{'='*60}")
-        train_fold(config, args.cap_root, fold, output_dir)
+        print(f"{'=' * 60}")
+        fold_metrics.append(
+            train_fold(config, args.cap_root, fold, output_dir)
+        )
 
-    print("\n[done] All folds complete.")
+    summary = summarize_metrics(fold_metrics)
+    summary_path = output_dir / "cross_validation_metrics.json"
+    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    print("\nCross-validation complete.")
+    print(f"  mean_test_accuracy : {summary['mean_test_accuracy']:.4f}")
+    print(f"  mean_test_macro_f1 : {summary['mean_test_macro_f1']:.4f}")
+    print(f"  mean_test_kappa    : {summary['mean_test_kappa']:.4f}")
+    print(f"  metrics saved to   : {summary_path}")
 
 
 if __name__ == "__main__":
