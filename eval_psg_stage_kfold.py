@@ -44,6 +44,8 @@ from train_psg_stage_kfold import (
     preprocess_batch,
     resolve_checkpoint_paths,
 )
+from main.utils.count_params import count_parameters,count_parameters_per_layer,print_parameter_summary
+
 
 
 # ---------------------------------------------------------------------------
@@ -473,6 +475,11 @@ def main() -> None:
         print(f"{'=' * 60}")
 
         model = build_model(config, fold, load_path=ckpt_path)
+        print_parameter_summary(model)
+        parameters=count_parameters_per_layer(model)
+        parameters.update(count_parameters(model))
+        with open(output_dir / f"fold_{fold}" / "model_parameter_counts.json", "w", encoding="utf-8") as f:
+            json.dump(parameters, f, indent=2)
         model.eval()
 
         for split in args.splits:
