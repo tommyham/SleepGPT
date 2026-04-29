@@ -361,7 +361,20 @@ def make_loaders(cap_root: str, kfold: int, config: dict):
     )
     return train_dl, val_dl, test_dl
 
-
+def make_stage_target(
+    stage_label: torch.Tensor,
+    num_classes: int = 5,
+    ignore_index: int = -100,
+) -> torch.Tensor:
+    target = stage_label.reshape(-1).long()
+    valid = (target >= 0) & (target < num_classes)
+    if not torch.all(valid | (target == ignore_index)):
+        target = torch.where(
+            valid,
+            target,
+            torch.full_like(target, ignore_index),
+        )
+    return target
 # ---------------------------------------------------------------------------
 # Batch utilities
 # ---------------------------------------------------------------------------
@@ -442,7 +455,12 @@ def evaluate_model(
         batch = _move_batch_to_device(batch, device)
         batch = preprocess_batch(batch, model)
 
-        target = batch["Stage_label"].reshape(-1).long()
+        # target = batch["Stage_label"].reshape(-1).long()
+        target = make_stage_target(
+            batch["Stage_label"],
+            num_classes=5,
+            ignore_index=-100,
+        )
         out = model.infer(batch, time_mask=False, stage="eval")
         logits = out["cls_feats"]["tf"]
         preds = logits.argmax(dim=-1)
@@ -527,7 +545,12 @@ def train_fold(
         for batch in train_dl:
             batch = _move_batch_to_device(batch, device)
             batch = preprocess_batch(batch, model)
-            target = batch["Stage_label"].reshape(-1).long()
+            target = make_stage_target(
+                    batch["Stage_label"],
+                    num_classes=config["num_classes"],
+                    ignore_index=-100,
+                )
+            # target = batch["Stage_label"].reshape(-1).long()
 
             optimizer.zero_grad()
             with torch.cuda.amp.autocast(enabled=use_amp):
@@ -536,7 +559,12 @@ def train_fold(
                 loss = F.cross_entropy(logits, target, ignore_index=-100)
 
             scaler.scale(loss).backward()
-            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            scaler.unscale_(optimizer)
+            nn.utils.clip_grad_norm_(
+                [p for p in model.parameters() if p.requires_grad],
+                1.0,
+            )
+            # nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             scaler.step(optimizer)
             scaler.update()
             scheduler.step_update(step)
