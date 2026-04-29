@@ -528,13 +528,23 @@ def train_fold(
 
 def resolve_checkpoint_paths(args: argparse.Namespace) -> list[str]:
     if args.checkpoint:
-        if len(args.checkpoint) == 1:
-            return [args.checkpoint[0]] * args.kfold
-        if len(args.checkpoint) == args.kfold:
-            return args.checkpoint
-        raise ValueError(
-            f"--checkpoint expects 1 or {args.kfold} paths, got {len(args.checkpoint)}"
-        )
+        checkpoint_paths = []
+        for fold in range(args.kfold):
+            checkpoint_path = Path(args.checkpoint[0]) / f"fold_{fold}" / "best.ckpt"
+            if not checkpoint_path.exists():
+                raise FileNotFoundError(
+                    f"Checkpoint path for fold {fold} does not exist: {checkpoint_path}"
+                )
+            checkpoint_paths.append(checkpoint_path)
+        return checkpoint_paths
+            
+        # if len(args.checkpoint) == 1:
+        #     return [args.checkpoint[0]] * args.kfold
+        # if len(args.checkpoint) == args.kfold:
+        #     return args.checkpoint
+        # raise ValueError(
+        #     f"--checkpoint expects 1 or {args.kfold} paths, got {len(args.checkpoint)}"
+        # )
 
     resolved = []
     output_dir = Path(args.output_dir)

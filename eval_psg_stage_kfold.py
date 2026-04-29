@@ -202,7 +202,7 @@ def save_subject_csvs(
     split: str,
 ) -> list[str]:
     """Save per-subject prediction CSVs under output_dir/fold_{fold}/eval/{split}/."""
-    split_dir = output_dir / f"fold_{fold}" / "eval" / split
+    split_dir = output_dir / f"fold_{fold}" / split
     split_dir.mkdir(parents=True, exist_ok=True)
     output_paths: list[str] = []
 
@@ -417,7 +417,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--splits",
         nargs="+",
-        default=["test"],
+        default=["test", "val", "train"],
         choices=["train", "val", "test"],
         help="Which splits to evaluate. Default: test",
     )
